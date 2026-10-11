@@ -1,6 +1,6 @@
 //! The android renderer pack — generated renderer sources + pattern fixtures, read from
 //! the shipped `almadar-renderers-android` beside the shell template, else this crate's
-//! `renderer-pack/` (`orbital_core::renderer_packs`).
+//! `renderers/compose/` (`orbital_core::renderer_packs`).
 
 use orbital_core::renderer_packs::{installed, RendererPack, RendererPackError};
 
@@ -13,7 +13,7 @@ pub fn require_renderer_pack() -> Result<&'static RendererPack, RendererPackErro
     installed(
         "android",
         RENDERER_INTERFACE,
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("renderer-pack"),
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("renderers/compose"),
     )
 }
 

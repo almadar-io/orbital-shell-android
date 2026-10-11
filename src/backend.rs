@@ -2247,7 +2247,7 @@ class GeneratedActivity : ComponentActivity() {
 /// device) under `app/src/main/assets/`, where `AssetManager` reads it at
 /// runtime.
 fn generate_resolved_schema_file(schema: &OrbitalSchema) -> GeneratedFile {
-    let content = serde_json::to_string_pretty(schema)
+    let content = orbital_core::util::canonical_json::to_canonical_string_pretty(schema)
         .unwrap_or_else(|e| format!("{{\"error\": \"failed to serialize resolved schema: {e}\"}}"));
     GeneratedFile {
         path: "app/src/main/assets/resolved_schema.json".to_string(),
@@ -3935,7 +3935,7 @@ mod tests {
                 entity: "Note".to_string(),
             },
         );
-        let mut fields = std::collections::HashMap::new();
+        let mut fields = orbital_core::ir::OirObject::new();
         fields.insert("x".to_string(), OirValue::Number(1.0));
         f.default = Some(OirValue::Object(fields));
         entity.fields.push(f);

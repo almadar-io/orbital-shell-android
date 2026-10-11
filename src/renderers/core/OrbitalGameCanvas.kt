@@ -34,7 +34,7 @@ import kotlinx.serialization.json.JsonPrimitive
  *
  * Hosts the native SurfaceView inside a Compose hierarchy so that
  * game-canvas/canvas/game-canvas-2d patterns are routed to the
- * orbital-game-renderer GPU path instead of the placeholder Box composable.
+ * orbital-canvas GPU path instead of the placeholder Box composable.
  *
  * @param sceneJson  The `canvas` render-ui node as JSON; the Rust renderer maps it to a
  *                   display list (`mappers::game_canvas_2d::from_canvas_node`).

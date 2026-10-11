@@ -14,7 +14,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
 /**
- * JNI bridge to the orbital-game-renderer native library.
+ * JNI bridge to the orbital-canvas native library.
  *
  * All GPU rendering lives in `liborbital_ffi.so` which is loaded
  * once via [System.loadLibrary].  The `external fun` declarations here map
@@ -193,7 +193,7 @@ object SystemFontSource {
 }
 
 /**
- * A [SurfaceView] that owns an orbital-game-renderer instance.
+ * A [SurfaceView] that owns an orbital-canvas instance.
  *
  * The Compose wrapper [OrbitalGameCanvas] below wraps this view.
  * The native renderer is initialized when the surface is created

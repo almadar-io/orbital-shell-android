@@ -5,6 +5,7 @@
 mod backend;
 mod pack;
 mod shell;
+pub mod shell_program;
 
 pub use backend::{classify_oir_type, AndroidBackend, ANDROID_EXTRA_SNAPSHOTS};
 pub use pack::{require_renderer_pack, RENDERER_INTERFACE};

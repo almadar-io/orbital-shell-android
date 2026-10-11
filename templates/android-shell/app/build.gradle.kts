@@ -69,7 +69,7 @@ android {
         }
     }
     externalNativeBuild {
-        // The orbital-game-renderer .so is pre-built by the Orbital toolchain
+        // The orbital-canvas .so is pre-built by the Orbital toolchain
         // and placed in src/main/jniLibs/<ABI>/ before the Gradle build.
         // No CMakeLists.txt needed — the library is loaded at runtime via
         // System.loadLibrary("orbital_shell_android") in OrbitalGameBridge.kt.

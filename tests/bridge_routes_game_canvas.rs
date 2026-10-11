@@ -3,14 +3,14 @@
 //! Verified structurally — kotlinc is absent in CI, so we inspect the emitted
 //! Kotlin sources that the backend writes into the generated project.
 //!
-//! Also exercises the headless RGBA path from orbital-game-renderer via the Rust
+//! Also exercises the headless RGBA path from orbital-canvas via the Rust
 //! c_api (no device/Vulkan needed on Linux CI — graceful skip when no adapter).
 
 use orbital_core::generate::Backend;
 use orbital_core::ir::OirModule;
-use orbital_game_renderer::{
+use orbital_canvas::{
     packet::{DrawCommand, GameRenderPacket, Rect},
-    GameRenderer,
+    Canvas,
 };
 use orbital_shell_android::AndroidBackend;
 
@@ -156,7 +156,7 @@ fn backend_emits_bridge_files() {
 
 #[test]
 fn headless_rgba_non_blank_or_no_adapter() {
-    let mut renderer = match GameRenderer::new_headless() {
+    let mut renderer = match Canvas::new_headless() {
         Ok(r) => r,
         Err(_) => return, // no adapter on this CI host — skip
     };

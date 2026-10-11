@@ -19,9 +19,7 @@ impl AndroidShell {
     /// Find the `android-shell` template directory at runtime.
     fn find_template_path() -> PathBuf {
         // The one template lookup (`ORBITAL_SHELLS_DIR` → beside the binary → the checkout).
-        orbital_core::renderer_packs::find_template_dir("android-shell").unwrap_or_else(|| {
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("template")
-        })
+        orbital_core::renderer_packs::shell_template("android-shell", std::path::Path::new(env!("CARGO_MANIFEST_DIR")))
     }
 
     /// Create with an explicit template path.
@@ -489,7 +487,7 @@ mod tests {
     }
 
     fn template_root() -> std::path::PathBuf {
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("template")
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates/android-shell")
     }
 
     #[test]
