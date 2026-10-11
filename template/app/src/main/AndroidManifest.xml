@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+
+    <application
+        android:allowBackup="true"
+        android:icon="@drawable/ic_launcher_background"
+        android:label="@string/app_name"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:roundIcon="@drawable/ic_launcher_background"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.{{APP_CLASS_NAME}}">
+        <meta-data android:name="OrbitalFirebaseApiKey" android:value="${orbitalFirebaseApiKey}" />
+        <meta-data android:name="OrbitalFirebaseProjectId" android:value="${orbitalFirebaseProjectId}" />
+        <meta-data android:name="OrbitalAuthEmulatorHost" android:value="${orbitalAuthEmulatorHost}" />
+        <activity
+            android:name="generated.GeneratedActivity"
+            android:exported="true"
+            android:theme="@style/Theme.{{APP_CLASS_NAME}}">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>
