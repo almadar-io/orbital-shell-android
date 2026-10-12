@@ -570,6 +570,7 @@ fn generate_effect_handlers_file() -> GeneratedFile {
     let content = r#"package generated
 
 import androidx.navigation.NavHostController
+import generated.patterns.core.AlmadarBus
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.serialization.json.JsonElement
@@ -665,6 +666,7 @@ class EffectHandlers(
             }
             "emit" -> {
                 val event = arr.getOrNull(1)?.jsonPrimitive?.content ?: return
+                AlmadarBus.post(event, arr.getOrNull(2))
                 onEmit(sourceTrait, event, arr.getOrNull(2))
             }
         }
@@ -3013,6 +3015,17 @@ mod tests {
         module.traits.push(trait_rendering_main("PeerA", &[]));
         module.traits.push(trait_rendering_main("PeerB", &[]));
         module
+    }
+
+    /// Every `emit` is posted to the renderer kit's `AlmadarBus` before it reaches `onEmit`, so a
+    /// renderer with an event-listen prop (code-block `onSetMode`) hears it — CodeBlock.tsx's bus listen.
+    #[test]
+    fn effect_handlers_post_every_emit_to_the_renderer_bus() {
+        let content = generate_effect_handlers_file().content;
+        assert!(content.contains("import generated.patterns.core.AlmadarBus"));
+        let post = content.find("AlmadarBus.post(event, arr.getOrNull(2))").expect("emit posts to the bus");
+        let forward = content.find("onEmit(sourceTrait, event, arr.getOrNull(2))").unwrap();
+        assert!(post < forward);
     }
 
     #[test]

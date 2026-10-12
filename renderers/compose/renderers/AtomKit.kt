@@ -69,6 +69,10 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.layer.GraphicsLayer
 import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.graphics.rememberGraphicsLayer
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEvent
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.utf16CodePoint
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.IntrinsicMeasurable
 import androidx.compose.ui.layout.IntrinsicMeasureScope
@@ -105,6 +109,8 @@ import coil.decode.Decoder
 import coil.decode.SvgDecoder
 import coil.fetch.SourceResult
 import coil.request.Options
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
 
 internal const val NAVIGATE_EVENT: String = "NAVIGATE"
 internal const val SIGN_OUT_EVENT: String = "SIGN_OUT"
@@ -2440,3 +2446,44 @@ val LocalAlmadarFieldFocusToken = compositionLocalOf<String?> { null }
 
 /** The `chat-bar` clear-pick event (`UI:ELEMENT_SELECTED` with `{ focus: null }` on the web). */
 internal const val CHAT_ELEMENT_SELECTED_EVENT: String = "ELEMENT_SELECTED"
+
+/** An event the app emitted, for a renderer that LISTENS to one (an event-listen prop, e.g. code-block `onSetMode`). */
+data class AlmadarBusEvent(val event: String, val payload: JsonElement?)
+
+/** The app's effect handler posts every `emit`; a renderer collects the event name its prop names. */
+object AlmadarBus {
+    private val flow = MutableSharedFlow<AlmadarBusEvent>(extraBufferCapacity = 64)
+    val events: SharedFlow<AlmadarBusEvent> = flow
+    fun post(event: String, payload: JsonElement?) { flow.tryEmit(AlmadarBusEvent(event, payload)) }
+}
+
+/** The DOM `KeyboardEvent.key` chord: modifiers in the fixed Control, Alt, Shift, Meta order, then the key. */
+internal fun almadarKeyChord(key: String, ctrl: Boolean, alt: Boolean, shift: Boolean, meta: Boolean): String =
+    listOfNotNull(if (ctrl) "Control" else null, if (alt) "Alt" else null, if (shift) "Shift" else null, if (meta) "Meta" else null, key).joinToString("+")
+
+/** A key event as DOM `KeyboardEvent.key`. */
+internal fun almadarDomKey(event: KeyEvent): String = when (event.key) {
+    Key.Escape -> "Escape"
+    Key.Enter -> "Enter"
+    Key.Backspace -> "Backspace"
+    Key.Delete -> "Delete"
+    Key.Tab -> "Tab"
+    Key.Spacebar -> " "
+    Key.DirectionUp -> "ArrowUp"
+    Key.DirectionDown -> "ArrowDown"
+    Key.DirectionLeft -> "ArrowLeft"
+    Key.DirectionRight -> "ArrowRight"
+    Key.MoveHome -> "Home"
+    Key.MoveEnd -> "End"
+    Key.PageUp -> "PageUp"
+    Key.PageDown -> "PageDown"
+    else -> if (event.utf16CodePoint > 0) String(Character.toChars(event.utf16CodePoint)) else ""
+}
+
+/** DOM `KeyboardEvent.code` for an `almadarDomKey`: letters are `KeyX`, digits `DigitN`, the space bar `Space`; named keys keep their name. */
+internal fun almadarDomCode(key: String): String = when {
+    key == " " -> "Space"
+    key.length == 1 && key[0].isLetter() -> "Key" + key.uppercase()
+    key.length == 1 && key[0].isDigit() -> "Digit" + key
+    else -> key
+}

@@ -17,6 +17,13 @@ import androidx.compose.ui.graphics.Color
 // tier: molecules — a grouped container styled by tokens only
 
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isAltPressed
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.AnnotatedString
@@ -33,6 +40,18 @@ internal fun AlmadarCodeBlock(props: JsonElement, modifier: Modifier, onEvent: (
     var copied by remember { mutableStateOf(false) }
     var active by remember { mutableStateOf(0) }
     var focused by remember { mutableStateOf(false) }
+    var capturedKeys by remember { mutableStateOf(emptySet<String>()) }
+    val setModeEvent = props.string("onSetMode", "SET_MODE")
+    val editorId = props.string("editorId")
+    // CodeBlock.tsx useEditorCapabilities: the latest SET_MODE for this editor names the keys it captures.
+    LaunchedEffect(setModeEvent, editorId) {
+        AlmadarBus.events.collect { bus ->
+            val payload = bus.payload
+            if (bus.event == setModeEvent && payload != null && payload.string("editorId") == editorId) {
+                capturedKeys = payload.array("keys").mapNotNull { (it as? JsonPrimitive)?.contentOrNull }.toSet()
+            }
+        }
+    }
     val clipboard = LocalClipboardManager.current
     val file = files.getOrNull(minOf(active, maxOf(files.size - 1, 0)))
     val code = if (file != null) file.string("code") else if (props.bool("editable")) draftState.value else props.string("code")
@@ -108,7 +127,16 @@ internal fun AlmadarCodeBlock(props: JsonElement, modifier: Modifier, onEvent: (
             if (!folded) {
                 if (props.bool("editable") && files.isEmpty()) {
                     Box(
-                        modifier = Modifier.fillMaxWidth().heightIn(max = limit).padding(almadarSpaceFor("xs")).onFocusChanged { state ->
+                        modifier = Modifier.fillMaxWidth().heightIn(max = limit).padding(almadarSpaceFor("xs")).onPreviewKeyEvent { event ->
+                            // A captured key (or chord) is kept out of the text and emitted as UI:{onKey} — CodeBlock.tsx handleEditableKeyDown.
+                            val keyEvent = props.string("onKey")
+                            if (event.type != KeyEventType.KeyDown || keyEvent.isEmpty() || editorId.isEmpty()) return@onPreviewKeyEvent false
+                            val key = almadarDomKey(event)
+                            val chord = almadarKeyChord(key, event.isCtrlPressed, event.isAltPressed, event.isShiftPressed, event.isMetaPressed)
+                            if (key !in capturedKeys && chord !in capturedKeys) return@onPreviewKeyEvent false
+                            onEvent(keyEvent, eventEnvelope(props, JsonObject(mapOf("editorId" to JsonPrimitive(editorId), "key" to JsonPrimitive(key), "code" to JsonPrimitive(almadarDomCode(key)), "ctrl" to JsonPrimitive(event.isCtrlPressed), "alt" to JsonPrimitive(event.isAltPressed), "shift" to JsonPrimitive(event.isShiftPressed), "meta" to JsonPrimitive(event.isMetaPressed), "repeat" to JsonPrimitive(event.nativeKeyEvent.repeatCount > 0)))))
+                            true
+                        }.onFocusChanged { state ->
                             if (state.hasFocus != focused) {
                                 focused = state.hasFocus
                                 val event = props.string(if (focused) "onEditorFocus" else "onEditorBlur", if (focused) "EDITOR_FOCUS" else "EDITOR_BLUR")
