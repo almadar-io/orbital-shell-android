@@ -361,6 +361,14 @@ internal fun AlmadarFab(
     ) { AlmadarIcon(name = icon, modifier = Modifier.size(LocalAlmadarIconography.current.defaultSize)) }
 }
 
+/** An S-expression (or any JSON value) as text — the twin of the Swift kit `AtomKit.sexpr`. */
+internal fun almadarSexpr(value: JsonElement?): String = when (value) {
+    is JsonArray -> "(" + value.joinToString(" ") { almadarSexpr(it) } + ")"
+    is JsonObject -> "{" + value.keys.sorted().joinToString(", ") { it + ": " + almadarSexpr(value[it]) } + "}"
+    is JsonPrimitive -> value.contentOrNull ?: "null"
+    else -> "null"
+}
+
 @Composable
 internal fun AlmadarBadge(
     label: String,

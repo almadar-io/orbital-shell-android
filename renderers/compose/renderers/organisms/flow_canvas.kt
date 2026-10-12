@@ -19,6 +19,7 @@ fun FlowCanvasRenderer(
 ) {
     val orbitals = props.jsonObject("schema")?.array("orbitals")?.mapNotNull { it as? JsonObject } ?: emptyList()
     val openEvent = props.string("openBehaviorEvent")
+    val traitsEvent = props.string("openTraitsEvent")
     Column(modifier = modifier.padding(almadarSpaceFor("sm")), verticalArrangement = Arrangement.spacedBy(almadarSpaceFor("sm"))) {
         if (orbitals.isEmpty()) AlmadarText("No program", variant = "caption", color = "muted")
         orbitals.forEach { orbital ->
@@ -27,6 +28,7 @@ fun FlowCanvasRenderer(
             else AlmadarButton(props, name, openEvent, onEvent, payload = almadarJson("name" to name), variant = "ghost")
             AlmadarText(orbital.jsonObject("entity")?.string("name") ?: "", variant = "caption", color = "muted")
             AlmadarBadge("${orbital.array("traits").size} traits · ${orbital.array("pages").size} pages")
+            if (traitsEvent.isNotEmpty()) AlmadarButton(props, "Open traits", traitsEvent, onEvent, payload = almadarJson("orbital" to name), variant = "ghost")
         }
     }
 }

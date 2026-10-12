@@ -32,9 +32,14 @@ fun SwitchRenderer(
     val disabled = props.bool("disabled")
     val changeEvent = props.string("onChange", "change")
     val name = props.string("name")
+    val action = props.string("action")
     val toggle = { next: Boolean ->
         checked = next
         onEvent(changeEvent, eventEnvelope(props, JsonObject(mapOf("checked" to JsonPrimitive(next)))))
+        if (action.isNotEmpty()) {
+            val merged = JsonObject((props.jsonObject("actionPayload") ?: JsonObject(emptyMap())) + mapOf("checked" to JsonPrimitive(next)))
+            onEvent(action, eventEnvelope(props.merging(mapOf("actionPayload" to merged))))
+        }
     }
     Row(
         modifier = modifier
