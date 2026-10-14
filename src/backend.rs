@@ -2293,13 +2293,6 @@ impl TargetTypeRenderer for KotlinRenderer<'_> {
     fn json(&self) -> String {
         "kotlinx.serialization.json.JsonElement".to_string()
     }
-    fn scalar(&self) -> String {
-        // `JsonPrimitive` IS the closed `string | number | boolean | null`
-        // union — the exact supertype of the four legal members — and it is
-        // @Serializable, so a data-class field typed `JsonPrimitive` round-trips.
-        // Fully qualified: Entities.kt's import header stays unchanged.
-        "kotlinx.serialization.json.JsonPrimitive".to_string()
-    }
     fn enum_ty(&self, name: &str, _enum_values: Option<&[String]>) -> String {
         split_to_pascal_case(name)
     }
@@ -2445,11 +2438,6 @@ impl TargetTypeRenderer for KotlinRenderer<'_> {
     }
     fn classify_json(&self) -> TypeMappingClass {
         TypeMappingClass::Lossy
-    }
-    fn classify_scalar(&self) -> TypeMappingClass {
-        // Pair decision with `scalar`: `JsonPrimitive` is exactly the closed
-        // `string | number | boolean | null` union — Faithful (Phase 3).
-        TypeMappingClass::Faithful
     }
     fn classify_node(&self) -> TypeMappingClass {
         // The json carrier keeps the pattern tree's STRUCTURE and erases
@@ -3979,10 +3967,6 @@ mod tests {
         assert_eq!(
             kt_ty(&OirType::Json),
             "kotlinx.serialization.json.JsonElement"
-        );
-        assert_eq!(
-            kt_ty(&OirType::Scalar),
-            "kotlinx.serialization.json.JsonPrimitive"
         );
         assert_eq!(
             kt_ty(&OirType::SExpr),
