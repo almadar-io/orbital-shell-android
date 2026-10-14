@@ -164,7 +164,7 @@ private fun glyphEffectStrokes(effectType: String, x: Float, y: Float, s: Float)
 private fun glyphFieldType(fieldType: String, x: Float, y: Float, s: Float): List<GlyphStroke> {
     val shape = when (fieldType) {
         "string", "email", "url", "phone", "uuid" -> "circle"
-        "number", "money" -> "triangle"
+        "number", "money", "scalar" -> "triangle"
         "boolean" -> "square"
         "date", "timestamp", "datetime" -> "diamond"
         "enum", "union" -> "ring"
