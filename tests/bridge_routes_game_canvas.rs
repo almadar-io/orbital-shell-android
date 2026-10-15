@@ -64,7 +64,7 @@ fn registry_routes_canvas_to_gpu_renderer() {
     // The registry only proves the symbol is REFERENCED — an emitted file must also
     // DEFINE it, or the reference is dead and kotlinc fails to resolve it (verified
     // 2026-09-18: this gate was green while GameCanvas2dRenderer did not exist).
-    let canvas_src = include_str!("../src/renderers/core/OrbitalGameCanvas.kt");
+    let canvas_src = include_str!("../renderers/compose/renderers/bridge/OrbitalGameCanvas.kt");
     assert!(
         canvas_src.contains("fun GameCanvas2dRenderer("),
         "OrbitalGameCanvas.kt does not define GameCanvas2dRenderer — the registry \
@@ -86,7 +86,7 @@ fn jni_bridge_declares_canonical_symbols() {
     // The Kotlin companion file must declare matching `external fun` names,
     // derived from the symbol suffix (`Java_generated_patterns_core_OrbitalGameBridge_native*`
     // -> `external fun native*`).
-    let kt_bridge_src = include_str!("../src/renderers/core/OrbitalGameBridge.kt");
+    let kt_bridge_src = include_str!("../renderers/compose/renderers/bridge/OrbitalGameBridge.kt");
     for sym in required_symbols {
         let suffix = sym
             .strip_prefix("Java_generated_patterns_core_OrbitalGameBridge_")
@@ -121,12 +121,12 @@ fn backend_emits_bridge_files() {
     let paths: Vec<&str> = output.files.iter().map(|f| f.path.as_str()).collect();
 
     assert!(
-        paths.contains(&"patterns/core/OrbitalGameBridge.kt"),
+        paths.contains(&"patterns/core/bridge/OrbitalGameBridge.kt"),
         "backend does not emit OrbitalGameBridge.kt; got: {:?}",
         paths
     );
     assert!(
-        paths.contains(&"patterns/core/OrbitalGameCanvas.kt"),
+        paths.contains(&"patterns/core/bridge/OrbitalGameCanvas.kt"),
         "backend does not emit OrbitalGameCanvas.kt; got: {:?}",
         paths
     );
@@ -134,7 +134,7 @@ fn backend_emits_bridge_files() {
     let bridge = output
         .files
         .iter()
-        .find(|f| f.path == "patterns/core/OrbitalGameBridge.kt")
+        .find(|f| f.path == "patterns/core/bridge/OrbitalGameBridge.kt")
         .unwrap();
     assert!(
         bridge.content.contains("external fun nativeInit"),
@@ -202,8 +202,8 @@ fn headless_rgba_non_blank_or_no_adapter() {
 
 #[test]
 fn canvas_host_sends_scene_not_raw_props_as_packet() {
-    let bridge = include_str!("../src/renderers/core/OrbitalGameBridge.kt");
-    let canvas = include_str!("../src/renderers/core/OrbitalGameCanvas.kt");
+    let bridge = include_str!("../renderers/compose/renderers/bridge/OrbitalGameBridge.kt");
+    let canvas = include_str!("../renderers/compose/renderers/bridge/OrbitalGameCanvas.kt");
     assert!(
         bridge.contains("OrbitalGameBridge.nativeSetScene(rendererPtr, scene)"),
         "surface view must forward the canvas node through nativeSetScene"
@@ -225,7 +225,7 @@ fn canvas_host_sends_scene_not_raw_props_as_packet() {
 
 #[test]
 fn jni_symbols_follow_the_kotlin_package() {
-    let kt = include_str!("../src/renderers/core/OrbitalGameBridge.kt");
+    let kt = include_str!("../renderers/compose/renderers/bridge/OrbitalGameBridge.kt");
     let package = kt
         .lines()
         .find_map(|l| l.strip_prefix("package "))
@@ -245,8 +245,8 @@ fn jni_symbols_follow_the_kotlin_package() {
 
 #[test]
 fn the_canvas_frame_loop_runs_only_for_an_animated_scene_on_the_host_clock() {
-    let canvas = include_str!("../src/renderers/core/OrbitalGameCanvas.kt");
-    let bridge = include_str!("../src/renderers/core/OrbitalGameBridge.kt");
+    let canvas = include_str!("../renderers/compose/renderers/bridge/OrbitalGameCanvas.kt");
+    let bridge = include_str!("../renderers/compose/renderers/bridge/OrbitalGameBridge.kt");
     let effect = canvas.split("LaunchedEffect(animating)").nth(1).expect("frame effect");
     let guard = effect.find("if (!animating) return@LaunchedEffect").expect("no loop when static");
     let frame = effect.find("withFrameNanos").expect("host frame clock");

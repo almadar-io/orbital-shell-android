@@ -9,7 +9,7 @@ use orbital_core::generate::Backend;
 use orbital_core::ir::OirModule;
 use orbital_shell_android::AndroidBackend;
 
-const KERNEL_BRIDGE_KT: &str = include_str!("../src/renderers/core/OrbitalKernelBridge.kt");
+const KERNEL_BRIDGE_KT: &str = include_str!("../renderers/compose/renderers/bridge/OrbitalKernelBridge.kt");
 
 #[test]
 fn kernel_bridge_declares_every_jni_symbol() {
@@ -38,7 +38,7 @@ fn backend_emits_kernel_bridge_file() {
 
     let paths: Vec<&str> = output.files.iter().map(|f| f.path.as_str()).collect();
     assert!(
-        paths.contains(&"patterns/core/OrbitalKernelBridge.kt"),
+        paths.contains(&"patterns/core/bridge/OrbitalKernelBridge.kt"),
         "backend does not emit OrbitalKernelBridge.kt; got: {:?}",
         paths
     );
@@ -46,7 +46,7 @@ fn backend_emits_kernel_bridge_file() {
     let bridge = output
         .files
         .iter()
-        .find(|f| f.path == "patterns/core/OrbitalKernelBridge.kt")
+        .find(|f| f.path == "patterns/core/bridge/OrbitalKernelBridge.kt")
         .unwrap();
     assert!(bridge.content.contains("external fun nativeInit"));
     assert!(bridge.content.contains("class OrbitalKernel"));

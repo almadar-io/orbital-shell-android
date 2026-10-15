@@ -3,7 +3,11 @@ package generated.patterns.core
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 
 /**
  * JNI bridge to the in-app `orbital_core::runtime::RuntimeKernel` (B5/B7,
@@ -79,6 +83,9 @@ object OrbitalKernelBridge {
     /** `{"states": {...}, "theme": KernelResolvedTheme}` for the handle's bound orbital. */
     external fun nativeSnapshot(handle: Long): String?
 
+    /** The rows a `RowSetRef` JSON resolves to now for the current viewer: `{"rows": [...], "total": N}`, or an `{"error": ...}` JSON. */
+    external fun nativeResolveRows(handle: Long, refJson: String): String?
+
     /** Set the kernel's tracked light/dark toggle (`"light"|"dark"`). */
     external fun nativeSetThemeMode(handle: Long, mode: String)
 
@@ -91,6 +98,9 @@ object OrbitalKernelBridge {
     /** Declare a new mount (a JSON array of trait names) before its INITs fire. */
     external fun nativeRemount(handle: Long, traitsJson: String)
     external fun nativeMount(handle: Long, traitsJson: String)
+
+    /** Strings the library returned that were not freed yet (the JNI forwarders free every result, so this reads 0). */
+    external fun nativeOutstandingStrings(): Long
 
     /** The handle's last recorded error message. */
     external fun nativeLastError(handle: Long): String
@@ -436,6 +446,29 @@ class OrbitalKernel private constructor(private val handle: Long) {
         val wire = runCatching { kernelJson.decodeFromString(Wire.serializer(), raw) }.getOrNull()
             ?: return KernelSnapshot(emptyMap(), null)
         return KernelSnapshot(wire.states, wire.theme, wire.canvasTheme, wire.motion)
+    }
+
+    /**
+     * The rows a row-set reference (the `ref` of a `$rowSet` marker) resolves to now for the current viewer, in the
+     * reference's order (`orbital_kernel_resolve_rows`); `null` when the kernel cannot resolve it (read [lastError]).
+     */
+    fun resolveRows(reference: JsonElement): JsonArray? {
+        val raw = OrbitalKernelBridge.nativeResolveRows(handle, kernelJson.encodeToString(JsonElement.serializer(), reference)) ?: return null
+        @Serializable
+        data class Wire(val rows: List<JsonElement>, val total: Int = 0)
+        val wire = runCatching { kernelJson.decodeFromString(Wire.serializer(), raw) }.getOrNull() ?: return null
+        return JsonArray(wire.rows)
+    }
+
+    /** [node] with every row-set marker replaced by the rows [resolveRows] answers; an unresolvable one becomes an empty list. */
+    fun resolvingRowSets(node: JsonElement): JsonElement = when (node) {
+        is JsonObject -> {
+            val reference = node["\$rowSet"]?.let { it as? JsonPrimitive }?.booleanOrNull?.takeIf { it }?.let { node["ref"] }
+            if (reference != null) resolveRows(reference) ?: JsonArray(emptyList())
+            else JsonObject(node.mapValues { resolvingRowSets(it.value) })
+        }
+        is JsonArray -> JsonArray(node.map { resolvingRowSets(it) })
+        else -> node
     }
 
     fun setThemeMode(mode: String) {

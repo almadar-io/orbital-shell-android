@@ -57,12 +57,13 @@ impl Backend for AndroidBackend {
             crate::pack::pack()
                 .sources
                 .iter()
+                .filter(|(rel, _)| !rel.starts_with(PACK_TESTS_PREFIX))
                 .map(|(rel, content)| GeneratedFile {
                     path: format!("patterns/core/{rel}"),
                     content: content.clone(),
                 }),
         );
-        files.extend(generate_game_bridge_files());
+        files.push(generate_auth_test_file());
         files.push(generate_pattern_snapshot_test_file());
         files.push(generate_app_file(module));
         files.push(generate_generated_activity_file(module));
@@ -993,13 +994,25 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
     private var nextAwaitToken = 0L
 
     /** `traitContent`, with a `skeleton` node for an awaiting trait that has not rendered yet. */
-    val contentWithAwaiting: StateFlow<Map<String, JsonElement>> = combine(_traitContent, _awaitingMain) {{ content, awaiting ->
-        content + awaiting.filterKeys {{ it !in content }}.mapValues {{ skeletonNode(it.value) }}
+    val contentWithAwaiting: StateFlow<Map<String, JsonElement>> = combine(_traitContent, _awaitingMain, _paintGeneration) {{ content, awaiting, _ ->
+        val painted = paintedRowSets(content)
+        painted + awaiting.filterKeys {{ it !in painted }}.mapValues {{ skeletonNode(it.value) }}
     }}.stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
 
+    /**
+     * `content` with every row-set marker replaced by the rows the kernel's one resolver answers now, re-checked for
+     * the signed-in viewer (EXEC-RENDER-3). The paint generation is a source of the flows below, so a rows-changed
+     * repaint (which re-applies an equal render) re-resolves too.
+     */
+    private suspend fun paintedRowSets(content: Map<String, JsonElement>): Map<String, JsonElement> {{
+        val k = kernel ?: return content
+        return withContext(Dispatchers.Default) {{ content.mapValues {{ k.resolvingRowSets(it.value) }} }}
+    }}
+
     /** `uiSlots`, with a `skeleton` node in an awaiting slot that is still empty. */
-    val slotsWithAwaiting: StateFlow<Map<String, JsonElement>> = combine(_uiSlots, _awaitingSlots) {{ slots, awaiting ->
-        slots + awaiting.filterKeys {{ it !in slots }}.mapValues {{ skeletonNode(it.value) }}
+    val slotsWithAwaiting: StateFlow<Map<String, JsonElement>> = combine(_uiSlots, _awaitingSlots, _paintGeneration) {{ slots, awaiting, _ ->
+        val painted = paintedRowSets(slots)
+        painted + awaiting.filterKeys {{ it !in painted }}.mapValues {{ skeletonNode(it.value) }}
     }}.stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
 
     /** `mainOrder`, then awaiting traits that own no content yet and are not embedded. */
@@ -2800,37 +2813,17 @@ class PatternSnapshotTests {{
     }
 }
 
-fn generate_game_bridge_files() -> Vec<GeneratedFile> {
-    const BRIDGE_DIR: &str = "patterns/core";
-    vec![
-        GeneratedFile {
-            path: format!("{BRIDGE_DIR}/OrbitalGameBridge.kt"),
-            content: include_str!("renderers/core/OrbitalGameBridge.kt").to_string(),
-        },
-        GeneratedFile {
-            path: format!("{BRIDGE_DIR}/OrbitalGameCanvas.kt"),
-            content: include_str!("renderers/core/OrbitalGameCanvas.kt").to_string(),
-        },
-        // B5 (ledger §159): the in-app kernel bridge, same BRIDGE_DIR/library as the
-        // game bridge above (`orbital-ffi` carries both C ABIs in one cdylib).
-        GeneratedFile {
-            path: format!("{BRIDGE_DIR}/OrbitalKernelBridge.kt"),
-            content: include_str!("renderers/core/OrbitalKernelBridge.kt").to_string(),
-        },
-        // Native sign-in: the host `/login` route's provider client, session binding and screen.
-        GeneratedFile {
-            path: format!("{BRIDGE_DIR}/OrbitalAuth.kt"),
-            content: include_str!("renderers/core/OrbitalAuth.kt").to_string(),
-        },
-        GeneratedFile {
-            path: format!("{BRIDGE_DIR}/OrbitalSignIn.kt"),
-            content: include_str!("renderers/core/OrbitalSignIn.kt").to_string(),
-        },
-        GeneratedFile {
-            path: "app/src/test/kotlin/generated/patterns/core/OrbitalAuthTest.kt".to_string(),
-            content: include_str!("renderers/core/tests/OrbitalAuthTest.kt").to_string(),
-        },
-    ]
+/// Pack sources under this prefix are the app's unit-test sources, not app sources.
+const PACK_TESTS_PREFIX: &str = "bridge/tests/";
+
+fn generate_auth_test_file() -> GeneratedFile {
+    GeneratedFile {
+        path: "app/src/test/kotlin/generated/patterns/core/OrbitalAuthTest.kt".to_string(),
+        content: crate::pack::pack()
+            .source(&format!("{PACK_TESTS_PREFIX}OrbitalAuthTest.kt"))
+            .expect("the pack ships bridge/tests/OrbitalAuthTest.kt")
+            .to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -2935,6 +2928,24 @@ mod tests {
                 .contains("private val JSON = \"\"\"[]\"\"\""),
             "a portal slot never opens for a skeleton"
         );
+    }
+
+    #[test]
+    fn the_view_model_paints_row_set_markers_through_the_kernel_resolver() {
+        let vm = generate_view_model_file(&awaiting_module()).content;
+        assert!(vm.contains("combine(_traitContent, _awaitingMain, _paintGeneration)"));
+        assert!(
+            vm.contains("combine(_uiSlots, _awaitingSlots, _paintGeneration)"),
+            "a rows-changed repaint re-applies an equal render, so the paint generation re-resolves"
+        );
+        assert_eq!(
+            vm.matches("k.resolvingRowSets(").count(),
+            1,
+            "control: one resolver call site, the stored content is never rewritten"
+        );
+        let bridge = include_str!("../renderers/compose/renderers/bridge/OrbitalKernelBridge.kt");
+        assert!(bridge.contains("external fun nativeResolveRows(handle: Long, refJson: String): String?"));
+        assert!(bridge.contains("fun resolvingRowSets(node: JsonElement): JsonElement"));
     }
 
     #[test]
@@ -3217,17 +3228,17 @@ mod tests {
         let output = backend.generate(&module);
         let paths: Vec<_> = output.files.iter().map(|f| f.path.as_str()).collect();
         assert!(
-            paths.contains(&"patterns/core/OrbitalGameBridge.kt"),
+            paths.contains(&"patterns/core/bridge/OrbitalGameBridge.kt"),
             "OrbitalGameBridge.kt must be generated"
         );
         assert!(
-            paths.contains(&"patterns/core/OrbitalGameCanvas.kt"),
+            paths.contains(&"patterns/core/bridge/OrbitalGameCanvas.kt"),
             "OrbitalGameCanvas.kt must be generated"
         );
         let bridge = output
             .files
             .iter()
-            .find(|f| f.path == "patterns/core/OrbitalGameBridge.kt")
+            .find(|f| f.path == "patterns/core/bridge/OrbitalGameBridge.kt")
             .unwrap();
         assert!(bridge.content.contains("external fun nativeInit"));
         assert!(bridge.content.contains("external fun nativeRender"));
@@ -3510,7 +3521,7 @@ mod tests {
         assert!(vm.contains("api.postServerLeg(orbital, leg)"));
         // Control: no baked orbital constant survives.
         assert!(!vm.contains("ORBITAL_NAME"));
-        let bridge = include_str!("renderers/core/OrbitalKernelBridge.kt");
+        let bridge = include_str!("../renderers/compose/renderers/bridge/OrbitalKernelBridge.kt");
         assert!(bridge.contains("orbital = wire.orbital,"));
     }
 
@@ -4452,7 +4463,7 @@ mod tests {
 
     #[test]
     fn kernel_bridge_declares_a_native_for_every_verify_bridge_symbol() {
-        let bridge = include_str!("renderers/core/OrbitalKernelBridge.kt");
+        let bridge = include_str!("../renderers/compose/renderers/bridge/OrbitalKernelBridge.kt");
         for name in [
             "nativeVerifyBridgeStart",
             "nativeVerifyBridgeStop",
@@ -4748,8 +4759,8 @@ mod tests {
                 .find(|f| f.path == path)
                 .unwrap_or_else(|| panic!("{path} not emitted"))
         };
-        let auth = &find("patterns/core/OrbitalAuth.kt").content;
-        let screen = &find("patterns/core/OrbitalSignIn.kt").content;
+        let auth = &find("patterns/core/bridge/OrbitalAuth.kt").content;
+        let screen = &find("patterns/core/bridge/OrbitalSignIn.kt").content;
         assert!(
             auth.contains("accounts:signInWithPassword")
                 && auth.contains("accounts:signInWithCustomToken")
@@ -5038,7 +5049,7 @@ mod tests {
 
     #[test]
     fn kernel_bridge_declares_abandon_and_set_route_natives_with_jni_exports() {
-        let bridge = include_str!("renderers/core/OrbitalKernelBridge.kt");
+        let bridge = include_str!("../renderers/compose/renderers/bridge/OrbitalKernelBridge.kt");
         for (name, sig) in [
             (
                 "nativeAbandonServerLeg",
@@ -5153,7 +5164,7 @@ mod tests {
 
     #[test]
     fn kernel_bridge_wraps_the_frame_api() {
-        let bridge = include_str!("renderers/core/OrbitalKernelBridge.kt");
+        let bridge = include_str!("../renderers/compose/renderers/bridge/OrbitalKernelBridge.kt");
         for sym in [
             "nativeFrame",
             "nativeFramePause",
