@@ -7,7 +7,7 @@
 //! process-global, so tests that touch them share `ENV_LOCK` to avoid
 //! stomping each other across the harness's parallel test threads.
 
-use orbital_core::shell::Shell;
+use orbital_core_base::shell::Shell;
 use orbital_shell_android::AndroidShell;
 use std::path::PathBuf;
 use std::sync::Mutex;

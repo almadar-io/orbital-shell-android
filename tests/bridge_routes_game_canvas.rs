@@ -6,8 +6,8 @@
 //! Also exercises the headless RGBA path from orbital-canvas via the Rust
 //! c_api (no device/Vulkan needed on Linux CI — graceful skip when no adapter).
 
-use orbital_core::generate::Backend;
-use orbital_core::ir::OirModule;
+use orbital_core_base::generate::Backend;
+use orbital_core_base::ir::OirModule;
 use orbital_canvas::{
     packet::{DrawCommand, GameRenderPacket, Rect},
     Canvas,

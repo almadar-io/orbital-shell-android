@@ -1,7 +1,7 @@
 //! `orb-shell-android`: the Android shell as a program (`orbital_core::shell_protocol`).
 
-use orbital_core::project::write_project;
-use orbital_core::shell_protocol::{
+use orbital_core_base::project::write_project;
+use orbital_core_base::shell_protocol::{
     description, written_files, GenerateRequest, GenerateResponse, ShellDescription, ShellFailure, ShellProgram,
     CODE_BAD_REQUEST, CODE_GENERATE_FAILED,
 };
@@ -9,7 +9,7 @@ use std::path::Path;
 
 pub struct AndroidProgram;
 
-fn resolved(request: &GenerateRequest) -> Result<orbital_core::OrbitalSchema, ShellFailure> {
+fn resolved(request: &GenerateRequest) -> Result<orbital_core_base::schema::types::OrbitalSchema, ShellFailure> {
     request
         .resolved
         .clone()

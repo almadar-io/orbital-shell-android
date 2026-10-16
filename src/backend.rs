@@ -1,12 +1,12 @@
 //! Android backend code generation.
 
-use orbital_core::generate::{Backend, GeneratedFile, GeneratedOutput};
-use orbital_core::ir::{
+use orbital_core_base::generate::{Backend, GeneratedFile, GeneratedOutput};
+use orbital_core_base::ir::{
     classify_type, render_default, render_type, OirEntity, OirField, OirModule, OirType,
     TargetLiteralRenderer, TargetTypeRenderer, TypeMappingClass,
 };
-use orbital_core::schema::{OrbitalSchema, ServiceDefinition};
-use orbital_core::str_utils::{
+use orbital_core_base::schema::{OrbitalSchema, ServiceDefinition};
+use orbital_core_base::str_utils::{
     escape_double_quoted, sanitize_identifier, split_to_camel_case, split_to_pascal_case,
     to_title_case,
 };
@@ -294,7 +294,7 @@ fn enum_class_name(entity_name: &str, field_name: &str) -> String {
     format!("{}{}", entity_name, split_to_pascal_case(field_name))
 }
 
-fn generate_services_file(services: &[orbital_core::schema::ServiceRef]) -> GeneratedFile {
+fn generate_services_file(services: &[orbital_core_base::schema::ServiceRef]) -> GeneratedFile {
     let mut content = String::from(
         "package generated\n\nimport kotlinx.serialization.Serializable\nimport kotlinx.serialization.SerialName\n\n",
     );
@@ -712,7 +712,7 @@ fn kotlin_initial_states_table(module: &OirModule) -> String {
 /// Traits referenced via `@trait.X` by a sibling's render-ui. They paint only inside the host's
 /// frame, so they never own `main` (`orbital_core::ir::build_embedded_trait_set`).
 fn kotlin_embedded_traits_set(module: &OirModule) -> String {
-    let mut names: Vec<String> = orbital_core::ir::build_embedded_trait_set(module)
+    let mut names: Vec<String> = orbital_core_base::ir::build_embedded_trait_set(module)
         .into_iter()
         .collect();
     names.sort();
@@ -740,7 +740,7 @@ fn declares_init(module: &OirModule, name: &str) -> bool {
 /// gated pages bind (`orbital_core::ir::gated_only_traits`), which INIT when
 /// their page first composes for an authenticated viewer.
 fn kotlin_traits_with_init_set(module: &OirModule) -> String {
-    let gated = orbital_core::ir::gated_only_traits(module);
+    let gated = orbital_core_base::ir::gated_only_traits(module);
     let names: Vec<String> = module
         .traits
         .iter()
@@ -757,7 +757,7 @@ fn kotlin_traits_with_init_set(module: &OirModule) -> String {
 
 /// `mapOf(path to listOf(trait, ...))` — each gated page's INIT-declaring gated-only traits.
 fn kotlin_gated_page_traits(module: &OirModule) -> String {
-    let entries: Vec<String> = orbital_core::ir::gated_page_traits(module)
+    let entries: Vec<String> = orbital_core_base::ir::gated_page_traits(module)
         .into_iter()
         .filter_map(|(path, traits)| {
             let names: Vec<String> = traits
@@ -787,7 +787,7 @@ fn generate_await_renders_file(module: &OirModule) -> GeneratedFile {
     let rows: Vec<_> = module
         .await_render_rows()
         .into_iter()
-        .filter(|row| !orbital_core::slots::is_portal_slot(&row.slot))
+        .filter(|row| !orbital_core_base::slots::is_portal_slot(&row.slot))
         .collect();
     let rows = serde_json::to_string(&rows)
         .expect("await-render rows serialize")
@@ -1650,7 +1650,7 @@ private fun spliceProp(
         traits_with_init = traits_with_init,
         gated_page_traits = gated_page_traits,
         embedded_traits = embedded_traits,
-        host_sign_in_route = orbital_core::schema::HOST_SIGN_IN_ROUTE
+        host_sign_in_route = orbital_core_base::schema::HOST_SIGN_IN_ROUTE
     );
 
     GeneratedFile {
@@ -1794,7 +1794,7 @@ fn generate_app_file(module: &OirModule) -> GeneratedFile {
                 .collect::<Vec<_>>()
                 .join(", ");
             let page = format!("GeneratedPage(\"{name}\", viewModel, listOf({trait_names}))");
-            if p.access == Some(orbital_core::schema::PageAccess::Authenticated) {
+            if p.access == Some(orbital_core_base::schema::PageAccess::Authenticated) {
                 format!(
                     "                composable(\"{path}\") {{ AuthenticatedPage(\"{path}\", \"{sign_in}\", viewModel, navController) {{ {page} }} }}"
                 )
@@ -1806,7 +1806,7 @@ fn generate_app_file(module: &OirModule) -> GeneratedFile {
     let any_gated = module
         .pages
         .iter()
-        .any(|p| p.access == Some(orbital_core::schema::PageAccess::Authenticated));
+        .any(|p| p.access == Some(orbital_core_base::schema::PageAccess::Authenticated));
     let authenticated_page = if any_gated {
         AUTHENTICATED_PAGE_KOTLIN
     } else {
@@ -2262,7 +2262,7 @@ class GeneratedActivity : ComponentActivity() {
 /// device) under `app/src/main/assets/`, where `AssetManager` reads it at
 /// runtime.
 fn generate_resolved_schema_file(schema: &OrbitalSchema) -> GeneratedFile {
-    let content = orbital_core::util::canonical_json::to_canonical_string_pretty(schema)
+    let content = orbital_core_eval::util::canonical_json::to_canonical_string_pretty(schema)
         .unwrap_or_else(|e| format!("{{\"error\": \"failed to serialize resolved schema: {e}\"}}"));
     GeneratedFile {
         path: "app/src/main/assets/resolved_schema.json".to_string(),
@@ -2833,20 +2833,20 @@ mod tests {
 
     fn awaiting_module() -> OirModule {
         let mut module = OirModule::new("App", "1.0.0");
-        let mut browse = orbital_core::ir::OirTrait::new("Browse");
-        let mut load = orbital_core::ir::OirTransition {
-            from: orbital_core::ir::OirTransitionFrom::Single("idle".into()),
+        let mut browse = orbital_core_base::ir::OirTrait::new("Browse");
+        let mut load = orbital_core_base::ir::OirTransition {
+            from: orbital_core_base::ir::OirTransitionFrom::Single("idle".into()),
             to: "loading".into(),
             event: "LOAD".into(),
             guard: None,
             effects: vec![],
             await_render: vec![],
         };
-        load.await_render.push(orbital_core::ir::AwaitRender {
+        load.await_render.push(orbital_core_base::ir::AwaitRender {
             trait_name: "Browse".into(),
             slot: "main".into(),
-            skeleton: orbital_core::ir::SkeletonNode::Shape {
-                shape: orbital_core::ir::SkeletonShape {
+            skeleton: orbital_core_base::ir::SkeletonNode::Shape {
+                shape: orbital_core_base::ir::SkeletonShape {
                     variant: "list".into(),
                     rows: Some(3),
                     columns: None,
@@ -2973,15 +2973,15 @@ mod tests {
             "control: every slot read goes through the awaiting view"
         );
     }
-    use orbital_core::ir::{
+    use orbital_core_base::ir::{
         OirEntity, OirEvent, OirField, OirPage, OirState, OirTrait, OirTraitBinding, OirValue,
     };
-    use orbital_core::schema::{RestServiceDefInner, ServiceDefinition, ServiceRef};
-    use orbital_core::slots::{slot_role as core_slot_role, SlotRole as CoreSlotRole};
+    use orbital_core_base::schema::{RestServiceDefInner, ServiceDefinition, ServiceRef};
+    use orbital_core_base::slots::{slot_role as core_slot_role, SlotRole as CoreSlotRole};
     use std::collections::HashMap;
 
-    fn trait_rendering_main(name: &str, children: &[&str]) -> orbital_core::ir::OirTrait {
-        use orbital_core::ir::{OirEffect, OirExpr, OirPattern, OirTransition, OirValue};
+    fn trait_rendering_main(name: &str, children: &[&str]) -> orbital_core_base::ir::OirTrait {
+        use orbital_core_base::ir::{OirEffect, OirExpr, OirPattern, OirTransition, OirValue};
         let mut pattern = OirPattern::new("stack");
         pattern.config.insert(
             "children".to_string(),
@@ -3140,7 +3140,7 @@ mod tests {
 
     #[test]
     fn test_generate_with_resolved_schema_emits_resource_file() {
-        let schema = orbital_core::schema::parse_schema(r#"{"name":"Test","orbitals":[]}"#)
+        let schema = orbital_core_base::schema::parse_schema(r#"{"name":"Test","orbitals":[]}"#)
             .expect("minimal schema parses");
         let backend = AndroidBackend::new().with_resolved_schema(schema);
         let module = OirModule::new("TestApp", "1.0.0");
@@ -3150,7 +3150,7 @@ mod tests {
             .iter()
             .find(|f| f.path == "app/src/main/assets/resolved_schema.json")
             .expect("resolved_schema.json not emitted");
-        let round_tripped: orbital_core::OrbitalSchema =
+        let round_tripped: orbital_core_base::schema::types::OrbitalSchema =
             serde_json::from_str(&resource.content).expect("emitted content is valid JSON");
         assert_eq!(round_tripped.name, "Test");
     }
@@ -3947,13 +3947,13 @@ mod tests {
                 entity: "Note".to_string(),
             },
         );
-        let mut fields = orbital_core::ir::OirObject::new();
+        let mut fields = orbital_core_base::ir::OirObject::new();
         fields.insert("x".to_string(), OirValue::Number(1.0));
         f.default = Some(OirValue::Object(fields));
         entity.fields.push(f);
 
         let content = generate_entity(&entity);
-        assert!(content.contains(orbital_core::ir::LITERAL_TYPE_MISMATCH_MARKER));
+        assert!(content.contains(orbital_core_base::ir::LITERAL_TYPE_MISMATCH_MARKER));
         assert!(content.contains("expected reference(Note) got object"));
     }
 
@@ -4300,7 +4300,7 @@ mod tests {
     #[test]
     fn effect_handlers_cover_all_client_effect_kinds() {
         let content = generate_effect_handlers_file().content;
-        for kind in orbital_core::effects::CLIENT_EFFECT_KINDS {
+        for kind in orbital_core_base::effect_types::CLIENT_EFFECT_KINDS {
             let arm = format!("\"{kind}\" ->");
             assert!(
                 content.contains(&arm),
@@ -4635,11 +4635,11 @@ mod tests {
     fn access_module(sign_in: Option<&str>) -> OirModule {
         let mut module = OirModule::new("TestApp", "1.0.0");
         let mut private = OirPage::new("Account", "/account");
-        private.access = Some(orbital_core::schema::PageAccess::Authenticated);
+        private.access = Some(orbital_core_base::schema::PageAccess::Authenticated);
         let mut public = OirPage::new("Home", "/home");
-        public.access = Some(orbital_core::schema::PageAccess::Public);
+        public.access = Some(orbital_core_base::schema::PageAccess::Public);
         module.pages = vec![private, public, OirPage::new("About", "/about")];
-        module.site = sign_in.map(|route| orbital_core::schema::SiteMeta {
+        module.site = sign_in.map(|route| orbital_core_base::schema::SiteMeta {
             sign_in: Some(route.to_string()),
             ..Default::default()
         });
@@ -4662,11 +4662,11 @@ mod tests {
     fn gated_trait_module() -> OirModule {
         let mut module = access_module(Some("/login"));
         for name in ["AccountView", "HomeView"] {
-            let mut t = orbital_core::ir::OirTrait::new(name);
-            t.events.push(orbital_core::ir::OirEvent::new("INIT"));
+            let mut t = orbital_core_base::ir::OirTrait::new(name);
+            t.events.push(orbital_core_base::ir::OirEvent::new("INIT"));
             module.traits.push(t);
         }
-        let bind = |name: &str| orbital_core::ir::OirTraitBinding {
+        let bind = |name: &str| orbital_core_base::ir::OirTraitBinding {
             trait_name: name.to_string(),
             trait_id: None,
             config: None,

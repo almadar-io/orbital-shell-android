@@ -5,8 +5,8 @@
 //! for the game bridge), and the backend actually emits the file into the
 //! generated Gradle project.
 
-use orbital_core::generate::Backend;
-use orbital_core::ir::OirModule;
+use orbital_core_base::generate::Backend;
+use orbital_core_base::ir::OirModule;
 use orbital_shell_android::AndroidBackend;
 
 const KERNEL_BRIDGE_KT: &str = include_str!("../renderers/compose/renderers/bridge/OrbitalKernelBridge.kt");

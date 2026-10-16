@@ -1,7 +1,7 @@
 //! Android Shell implementation.
 
-use orbital_core::shell::{Shell, ShellError};
-use orbital_core::str_utils::{split_to_pascal_case, to_title_case};
+use orbital_core_base::shell::{Shell, ShellError};
+use orbital_core_base::str_utils::{split_to_pascal_case, to_title_case};
 use std::path::{Path, PathBuf};
 
 /// Android shell for native Jetpack Compose projects.
@@ -19,7 +19,7 @@ impl AndroidShell {
     /// Find the `android-shell` template directory at runtime.
     fn find_template_path() -> PathBuf {
         // The one template lookup (`ORBITAL_SHELLS_DIR` → beside the binary → the checkout).
-        orbital_core::renderer_packs::shell_template("android-shell", std::path::Path::new(env!("CARGO_MANIFEST_DIR")))
+        orbital_core_base::renderer_packs::shell_template("android-shell", std::path::Path::new(env!("CARGO_MANIFEST_DIR")))
     }
 
     /// Create with an explicit template path.
