@@ -1,5 +1,5 @@
 // R1-device-android host: loads liborbital_ffi through the JNI forwarders over the kernel C ABI and times the
-// parity workloads (`@almadar-io/parity gen-device-workloads` writes them). Prints one JSON line.
+// parity workloads (`@almadar-io/kernel-bench-tool gen-device-workloads` writes them). Prints one JSON line.
 // Runs under app_process (see run.sh); no APK. Usage: Bench <workload-dir> [--sustained]
 import generated.patterns.core.OrbitalKernelBridge as Bridge
 import org.json.JSONArray
