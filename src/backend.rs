@@ -1245,7 +1245,7 @@ impl TargetTypeRenderer for KotlinRenderer<'_> {
     fn optional(&self, _inner_ty: &OirType, inner: String) -> String {
         format!("{}?", inner)
     }
-    fn struct_ty(&self, fields: &[OirField]) -> String {
+    fn struct_ty(&self, fields: &[OirField], _additional: Option<&OirType>) -> String {
         let name = self.context_name.clone();
         let parts: Vec<String> = fields
             .iter()
@@ -1290,8 +1290,8 @@ impl TargetTypeRenderer for KotlinRenderer<'_> {
                     hoisted: self.hoisted,
                 };
                 let fields = match &v.field_type {
-                    OirType::Struct { fields } => fields
-                        .iter()
+                    OirType::Struct { fields, additional: _additional } => {
+                        fields.iter()
                         .map(|f| {
                             let grandchild = KotlinRenderer {
                                 context_name: format!(
@@ -1312,7 +1312,8 @@ impl TargetTypeRenderer for KotlinRenderer<'_> {
                             )
                         })
                         .collect::<Vec<_>>()
-                        .join(", "),
+                        .join(", ")
+                    },
                     other => {
                         format!("val value: {}", render_type(&child, other, None))
                     }
@@ -1405,8 +1406,8 @@ impl TargetTypeRenderer for KotlinRenderer<'_> {
     fn classify_optional(&self, _inner_ty: &OirType, inner: TypeMappingClass) -> TypeMappingClass {
         inner
     }
-    fn classify_struct_ty(&self, _fields: &[OirField]) -> TypeMappingClass {
-        TypeMappingClass::Faithful
+    fn classify_struct_ty(&self, _fields: &[OirField], additional: Option<&OirType>) -> TypeMappingClass {
+        if additional.is_some() { TypeMappingClass::Lossy } else { TypeMappingClass::Faithful }
     }
     fn classify_union_ty(&self, variants: &[OirField]) -> TypeMappingClass {
         // A named sealed class with @Serializable subtypes carries every
@@ -2868,6 +2869,7 @@ mod tests {
         nick_name.required = false;
         let note = OirField::optional("note", OirType::String);
         let struct_ty = OirType::Struct {
+            additional: None,
             fields: vec![OirField::new("full_name", OirType::String), nick_name, note],
         };
 
@@ -2960,6 +2962,7 @@ mod tests {
         let mut nick_name = OirField::new("nick_name", OirType::String);
         nick_name.required = false;
         let struct_ty = OirType::Struct {
+            additional: None,
             fields: vec![OirField::new("full_name", OirType::String), nick_name],
         };
         let (ty, hoisted) = oir_type_to_kotlin_hoisted(&struct_ty, "Ctx");
@@ -2972,6 +2975,7 @@ mod tests {
         // Nested structs extend the positional name — no shared-context
         // same-name collision.
         let nested = OirType::Struct {
+            additional: None,
             fields: vec![
                 OirField::new("geo", struct_ty.clone()),
                 OirField::new("alt", struct_ty),
@@ -2996,12 +3000,14 @@ mod tests {
                 OirField::new(
                     "book",
                     OirType::Struct {
+                        additional: None,
                         fields: vec![OirField::new("kind", OirType::String)],
                     },
                 ),
                 OirField::new(
                     "movie",
                     OirType::Struct {
+                        additional: None,
                         fields: vec![OirField::new("kind", OirType::String)],
                     },
                 ),
