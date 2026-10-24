@@ -1187,8 +1187,8 @@ fn generate_resolved_schema_file(schema: &OrbitalSchema) -> GeneratedFile {
 /// entity class) and the field references it by bare name — a Kotlin type
 /// position cannot carry an inline class declaration. Nested structs extend
 /// the name positionally (`{Entity}{Field}{Nested}…`), so sibling fields in a
-/// shared context never collide. Kotlin merges `Number`/`Integer` into
-/// `Double` and ignores the field-level `enum_values` sidecar (enums are
+/// shared context never collide. Kotlin maps `Number` to `Double`
+/// and `Integer` to `Long`, and ignores the field-level `enum_values` sidecar (enums are
 /// pre-rewritten to `OirType::Enum` at the field layer by `type_for_field`,
 /// not handled here).
 struct KotlinRenderer<'a> {
@@ -1206,7 +1206,7 @@ impl TargetTypeRenderer for KotlinRenderer<'_> {
         "Double".to_string()
     }
     fn integer(&self) -> String {
-        "Double".to_string()
+        "Long".to_string()
     }
     fn boolean(&self) -> String {
         "Boolean".to_string()
@@ -1336,7 +1336,7 @@ impl TargetTypeRenderer for KotlinRenderer<'_> {
     }
 
     // Classifications per `docs/Orbital_Type_Chain_Table.md` (Kotlin column)
-    // as amended by Phase 3: Number/Integer→Double and the String-carried
+    // as amended by Phase 3: Number→Double, Integer→Long (Faithful) and the String-carried
     // domains/date are Widening; Json is Lossy; `type_ref` is the bare
     // hoisted name — Faithful (Phase 3D: every entry's declaration, recursive
     // alias or nominalized anonymous shape, carries the full shape at the top
@@ -1353,7 +1353,7 @@ impl TargetTypeRenderer for KotlinRenderer<'_> {
         TypeMappingClass::Widening
     }
     fn classify_integer(&self) -> TypeMappingClass {
-        TypeMappingClass::Widening
+        TypeMappingClass::Faithful
     }
     fn classify_boolean(&self) -> TypeMappingClass {
         TypeMappingClass::Faithful
@@ -1480,7 +1480,7 @@ impl TargetLiteralRenderer for KotlinLiteral {
         b.to_string()
     }
     fn integer(&self, i: i64) -> String {
-        i.to_string()
+        format!("{i}L")
     }
     /// Always carries a decimal point — Rust's `f64` `Display` prints a whole
     /// number like `1.0` as `"1"`, which Kotlin would then infer as `Int`,
@@ -2848,6 +2848,25 @@ mod tests {
     }
 
     #[test]
+    fn integer_default_is_a_long_literal_and_number_stays_double() {
+        let mut entity = OirEntity::new("Product");
+        let mut f = OirField::new("stock", OirType::Integer);
+        f.default = Some(OirValue::Number(5.0));
+        entity.fields.push(f);
+        let content = generate_entity(&entity);
+        assert!(content.contains("val stock: Long = 5L"));
+        assert_eq!(kt_ty(&OirType::Number), "Double");
+        assert_eq!(
+            classify_oir_type(&OirType::Integer),
+            TypeMappingClass::Faithful
+        );
+        assert_eq!(
+            classify_oir_type(&OirType::Number),
+            TypeMappingClass::Widening
+        );
+    }
+
+    #[test]
     fn number_default_always_carries_a_decimal_point() {
         let mut entity = OirEntity::new("Product");
         let mut f = OirField::new("price", OirType::Number);
@@ -2921,7 +2940,7 @@ mod tests {
     fn char_map_type_to_kotlin_arms() {
         assert_eq!(kt_ty(&OirType::String), "String");
         assert_eq!(kt_ty(&OirType::Number), "Double");
-        assert_eq!(kt_ty(&OirType::Integer), "Double");
+        assert_eq!(kt_ty(&OirType::Integer), "Long");
         assert_eq!(kt_ty(&OirType::Boolean), "Boolean");
         assert_eq!(kt_ty(&OirType::Date), "String");
         assert_eq!(kt_ty(&OirType::DateTime), "String");
@@ -2949,7 +2968,7 @@ mod tests {
         assert_eq!(kt_ty(&OirType::optional(OirType::Boolean)), "Boolean?");
         assert_eq!(
             kt_ty(&OirType::optional(OirType::optional(OirType::Integer))),
-            "Double?"
+            "Long?"
         );
 
         // Struct: one required + one optional field. The field position now
