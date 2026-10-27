@@ -370,7 +370,7 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
                 "Orbital",
                 "live-push dispatch trait=$trait event=${{item.event}} mode=${{result.mode}}"
             )
-            foldResponse(trait, result.response)
+            foldResponse(result.response)
         }}
     }}
 
@@ -468,7 +468,7 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
      * fate. A tapped event and a tick's `emit` cascade both land here.
      */
     private suspend fun foldDispatch(trait: String, result: KernelDispatchResult) {{
-        foldResponse(trait, result.response)
+        foldResponse(result.response)
         val awaitToken = beginAwaiting(result.awaiting.flatMap {{ AwaitRenders.matching(it) }}, result.serverLegs.size)
 
         when (result.mode) {{
@@ -578,7 +578,7 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
 
     /** The tick response folds like a dispatch response; each tick `emit` cascade folds (and posts its server leg) like a tapped event on the emitting trait. */
     private suspend fun foldFrame(frame: KernelFrameResult) {{
-        foldResponse(frame.fired.firstOrNull()?.trait ?: "", frame.response)
+        foldResponse(frame.response)
         frame.dispatches.forEach {{ foldDispatch(it.trait, it.result) }}
         frame.errors.forEach {{ android.util.Log.e("Orbital", "tick failed: $it") }}
         if (frame.droppedServerEffects > 0 && !loggedDroppedServerEffects) {{
@@ -590,13 +590,12 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
     /**
      * Fold a [KernelEventResponse] into view-model
      * state: merge `states`, land `data`/`entityByTrait`, and route every
-     * `clientEffects` entry through [effectHandlers] attributed by the
-     * paired `clientEffectsByTrait[i].traitName` (falling back to
-     * `requestTrait`). A `success = false` response surfaces
+     * `clientEffectsByTrait` entry's `effect` through [effectHandlers]
+     * attributed by its own `traitName`. A `success = false` response surfaces
      * `error`/`guardFailed` as a notification — read for the message only,
      * never as the success/failure switch (`success` already is that).
      */
-    private suspend fun foldResponse(requestTrait: String, response: KernelEventResponse) {{
+    private suspend fun foldResponse(response: KernelEventResponse) {{
         if (response.states.isNotEmpty()) {{
             _states.value = _states.value + response.states
         }}
@@ -606,11 +605,11 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
             val existing = _fields.value[trait] ?: JsonObject(emptyMap())
             _fields.value = _fields.value + (trait to JsonObject(existing + obj))
         }}
-        val effects = response.clientEffects.orEmpty()
-        val byTrait = response.clientEffectsByTrait.orEmpty()
-        effects.forEachIndexed {{ i, effect ->
-            val paired = (byTrait.getOrNull(i) as? JsonObject)?.get("traitName")?.jsonPrimitive?.contentOrNull
-            effectHandlers.apply(effect, paired ?: requestTrait)
+        response.clientEffectsByTrait.orEmpty().forEach {{ entry ->
+            val obj = entry as? JsonObject ?: return@forEach
+            val trait = obj["traitName"]?.jsonPrimitive?.contentOrNull ?: return@forEach
+            val effect = obj["effect"] ?: return@forEach
+            effectHandlers.apply(effect, trait)
         }}
         if (!response.success) {{
             _notifications.emit(response.error ?: response.guardFailed ?: "Event failed")
@@ -644,7 +643,7 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
             if (snapshot != null) {{
                 val repaint = kernelCalls.withLock {{ k.restore(requestTrait, null, snapshot) }}
                 _states.value = _states.value + (requestTrait to snapshot.state)
-                if (repaint != null) foldResponse(requestTrait, repaint)
+                if (repaint != null) foldResponse(repaint)
             }} else {{
                 kernelCalls.withLock {{ k.abandonServerLeg(leg.targetTrait ?: requestTrait, seedEvent, error) }}
             }}
@@ -666,7 +665,7 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
                         applied.applied.forEach {{ pair ->
                             _states.value = _states.value + (pair.trait to pair.event)
                         }}
-                        foldResponse(requestTrait, applied.response)
+                        foldResponse(applied.response)
                     }}
                 }} else {{
                     val message = decoded?.error ?: decoded?.guardFailed ?: "malformed server response"

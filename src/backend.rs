@@ -2537,17 +2537,18 @@ mod tests {
         );
     }
 
-    /// Every `clientEffects` entry must be routed through the shared
-    /// `EffectHandlers` instance, attributed by the paired
-    /// `clientEffectsByTrait[i].traitName` (falling back to the request
-    /// trait) — never the retired content-embedded `sourceTrait`.
+    /// Every `clientEffectsByTrait` entry's `effect` must be routed through the
+    /// shared `EffectHandlers` instance, attributed by its own `traitName`
+    /// — never the retired content-embedded `sourceTrait`.
     #[test]
     fn view_model_routes_client_effects_through_effect_handlers() {
         let module = OirModule::new("TestApp", "1.0.0");
         let content = generate_view_model_file(&module).content;
         assert!(content.contains("private val effectHandlers = EffectHandlers("));
-        assert!(content.contains("val paired = (byTrait.getOrNull(i) as? JsonObject)?.get(\"traitName\")?.jsonPrimitive?.contentOrNull"));
-        assert!(content.contains("effectHandlers.apply(effect, paired ?: requestTrait)"));
+        assert!(content.contains("response.clientEffectsByTrait.orEmpty().forEach { entry ->"));
+        assert!(content.contains("val trait = obj[\"traitName\"]?.jsonPrimitive?.contentOrNull ?: return@forEach"));
+        assert!(content.contains("val effect = obj[\"effect\"] ?: return@forEach"));
+        assert!(content.contains("effectHandlers.apply(effect, trait)"));
         // The "emit" client effect still routes through onEmit == sendEvent
         // (CLIENT_EFFECT_KINDS coverage; the kernel never actually produces it).
         assert!(content.contains("trait, event, payload -> sendEvent(trait, event, payload)"));
@@ -2610,7 +2611,7 @@ mod tests {
         assert!(content.contains("private fun onLivePushItem(item: LiveBroadcastItem) {"));
         assert!(content.contains("if (item.originClientId == clientId) return"));
         assert!(content.contains("k.dispatch(trait, null, item.event, payloadJson)"));
-        assert!(content.contains("foldResponse(trait, result.response)"));
+        assert!(content.contains("foldResponse(result.response)"));
     }
 
     /// The theme comes from the kernel's own snapshot (`OrbitalKernel
@@ -3789,12 +3790,12 @@ mod tests {
     fn applied_server_response_folds_through_the_dispatch_fold() {
         let module = OirModule::new("TestApp", "1.0.0");
         let vm = generate_view_model_file(&module).content;
-        assert!(vm.contains("foldResponse(trait, result.response)"));
-        assert!(vm.contains("foldResponse(requestTrait, applied.response)"));
+        assert!(vm.contains("foldResponse(result.response)"));
+        assert!(vm.contains("foldResponse(applied.response)"));
         assert_eq!(vm.matches("private suspend fun foldResponse(").count(), 1);
         assert_eq!(vm.matches("effectHandlers.apply(effect,").count(), 1);
         let rejected = vm.find("val message = decoded?.error").unwrap();
-        assert!(!vm[rejected..].contains("foldResponse(requestTrait, applied.response)"));
+        assert!(!vm[rejected..].contains("foldResponse(applied.response)"));
     }
 
     #[test]
@@ -4094,7 +4095,7 @@ mod tests {
         let fold = vm.find("private suspend fun foldFrame(").unwrap();
         let body = &vm[fold..fold + vm[fold..].find("\n    }\n").unwrap()];
         assert!(
-            body.contains("foldResponse(frame.fired.firstOrNull()?.trait ?: \"\", frame.response)")
+            body.contains("foldResponse(frame.response)")
         );
         assert!(body.contains("foldDispatch(it.trait, it.result)"));
         assert_eq!(

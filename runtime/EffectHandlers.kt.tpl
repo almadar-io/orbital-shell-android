@@ -12,14 +12,14 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
 
 /**
- * Applies client-side effects the kernel handed back (`KernelEventResponse
- * .clientEffects`, one `["render-ui", slot, config, props?, priority?]` /
+ * Applies client-side effects the kernel handed back (each `KernelEventResponse
+ * .clientEffectsByTrait` entry's `effect`, one `["render-ui", slot, config, props?, priority?]` /
  * `["navigate", path, params?, options?]` / `["navigate-back"]` tuple per
  * entry — the canonical wire, `orbital_core::effects::ClientEffect`).
  * `traitContent` indexes every Main-role render by its SOURCE trait (never a
  * slot name) so `@trait.X` composition can resolve it. `sourceTrait` is the
- * CALLER-resolved attribution (the paired `clientEffectsByTrait[i].traitName`,
- * falling back to the request trait) — the wire no longer stamps it inside
+ * CALLER-resolved attribution (the entry's own `clientEffectsByTrait` `traitName`)
+ * — the wire no longer stamps it inside
  * the content itself. `onEmit` stays wired for `CLIENT_EFFECT_KINDS`
  * coverage (`orbital_core::effects::CLIENT_EFFECT_KINDS` still lists
  * `"emit"`), though the kernel's own `ClientEffect` never actually produces
@@ -37,8 +37,8 @@ class EffectHandlers(
 ) {
     /**
      * Apply a single client effect array (e.g. ["render-ui", "main", {...}]),
-     * attributed to `sourceTrait` (from `clientEffectsByTrait`, or the
-     * request trait when no pairing exists). A null/absent third element on
+     * attributed to `sourceTrait` (the `traitName` of its
+     * `clientEffectsByTrait` entry). A null/absent third element on
      * "render-ui" clears/closes that slot or source's content; a present
      * fourth element (arity-4/5 form) merges its keys on top of the third
      * (config) as the resolved render props.

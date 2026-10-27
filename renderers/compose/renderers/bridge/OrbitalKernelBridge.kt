@@ -163,7 +163,6 @@ data class KernelEventResponse(
     val emittedEvents: List<KernelEmittedEvent>,
     val data: Map<String, List<JsonElement>>? = null,
     val entityByTrait: Map<String, JsonElement>? = null,
-    val clientEffects: List<JsonElement>? = null,
     val clientEffectsByTrait: List<JsonElement>? = null,
     val effectResults: List<JsonElement>? = null,
     val guardFailed: String? = null,
