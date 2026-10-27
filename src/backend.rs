@@ -2890,7 +2890,7 @@ mod tests {
         let note = OirField::optional("note", OirType::String);
         let struct_ty = OirType::Struct {
             additional: None,
-            fields: vec![OirField::new("full_name", OirType::String), nick_name, note],
+            fields: vec![OirField::new("full_name", OirType::String), nick_name, note].into(),
         };
 
         let (_, hoisted) = oir_type_to_kotlin_hoisted(&struct_ty, "Ctx");
@@ -2983,7 +2983,7 @@ mod tests {
         nick_name.required = false;
         let struct_ty = OirType::Struct {
             additional: None,
-            fields: vec![OirField::new("full_name", OirType::String), nick_name],
+            fields: vec![OirField::new("full_name", OirType::String), nick_name].into(),
         };
         let (ty, hoisted) = oir_type_to_kotlin_hoisted(&struct_ty, "Ctx");
         assert_eq!(ty, "Ctx");
@@ -2999,7 +2999,7 @@ mod tests {
             fields: vec![
                 OirField::new("geo", struct_ty.clone()),
                 OirField::new("alt", struct_ty),
-            ],
+            ].into(),
         };
         let (ty, hoisted) = oir_type_to_kotlin_hoisted(&nested, "Ctx");
         assert_eq!(ty, "Ctx");
@@ -3021,17 +3021,17 @@ mod tests {
                     "book",
                     OirType::Struct {
                         additional: None,
-                        fields: vec![OirField::new("kind", OirType::String)],
+                        fields: vec![OirField::new("kind", OirType::String)].into(),
                     },
                 ),
                 OirField::new(
                     "movie",
                     OirType::Struct {
                         additional: None,
-                        fields: vec![OirField::new("kind", OirType::String)],
+                        fields: vec![OirField::new("kind", OirType::String)].into(),
                     },
                 ),
-            ],
+            ].into(),
         };
         let (ty, hoisted) = oir_type_to_kotlin_hoisted(&union_ty, "Ctx");
         assert_eq!(ty, "Ctx");
