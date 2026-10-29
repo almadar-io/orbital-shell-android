@@ -680,8 +680,7 @@ private fun AuthenticatedPage(
 fn generate_app_file(module: &OirModule) -> GeneratedFile {
     let app_name = to_title_case(&module.name);
     let start_route = module
-        .pages
-        .first()
+        .initial_page()
         .map(|p| p.path.clone())
         .unwrap_or_else(|| "/".to_string());
 
@@ -3974,6 +3973,18 @@ mod tests {
         let app = generate_app_file(&module).content;
         assert!(app.contains("LaunchedEffect(viewModel.isReady) {"));
         assert!(app.contains("if (viewModel.isReady) viewModel.openInitialRoute(\""));
+    }
+
+    #[test]
+    fn start_destination_is_the_initial_page_else_the_first() {
+        let mut module = OirModule::new("TestApp", "1.0.0");
+        module.pages.push(OirPage::new("Home", "/home"));
+        let mut scorecard = OirPage::new("Scorecard", "/scorecard");
+        scorecard.is_initial = true;
+        module.pages.push(scorecard);
+        assert!(generate_app_file(&module).content.contains(r#"startDestination = "/scorecard""#));
+        module.pages[1].is_initial = false;
+        assert!(generate_app_file(&module).content.contains(r#"startDestination = "/home""#));
     }
 
     #[test]
