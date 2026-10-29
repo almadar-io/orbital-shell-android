@@ -44,7 +44,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 
-/** Accessibility ids of the host sign-in route, addressed by the verify driver (`testTag` is exposed as the resource id). */
+/** Accessibility ids of the host sign-in route, addressed by UI tests (`testTag` is exposed as the resource id). */
 object SignInIds {
     const val TITLE = "signin-title"
     const val EMAIL = "field-signin-email"

@@ -61,8 +61,6 @@ object OrbitalKernelBridge {
     /** Roll a trait back; returns the repaint (`KernelEventResponse` JSON) the rollback owes bound traits. */
     external fun nativeRestore(handle: Long, traitName: String, entityId: String?, snapshotJson: String): String?
 
-    /** A server leg failed at transport level with no snapshot to restore: Does nothing: the kernel keeps no record of an abandoned leg. */
-    external fun nativeAbandonServerLeg(handle: Long, traitName: String, event: String?, error: String?)
 
     /** The `KernelFrameDelta` JSON a painter at version [since] of the kernel's frames needs. */
     external fun nativeFramesSince(handle: Long, since: Long): String?
@@ -426,10 +424,6 @@ class OrbitalKernel private constructor(private val handle: Long) {
         val snapshotJson = kernelJson.encodeToString(KernelTraitSnapshot.serializer(), snapshot)
         val raw = OrbitalKernelBridge.nativeRestore(handle, trait, entityId, snapshotJson) ?: return null
         return runCatching { kernelJson.decodeFromString(KernelEventResponse.serializer(), raw) }.getOrNull()
-    }
-
-    fun abandonServerLeg(trait: String, event: String?, error: String?) {
-        OrbitalKernelBridge.nativeAbandonServerLeg(handle, trait, event, error)
     }
 
     fun tick(trait: String, tickName: String, entityId: String?): KernelEventResponse? {

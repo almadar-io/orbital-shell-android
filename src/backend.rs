@@ -1138,7 +1138,7 @@ import androidx.activity.compose.setContent
  *
  * Launch extras are honoured only in a debuggable build and read before the view model exists.
  * `-e ORBITAL_API_BASE_URL <url>` points the app at a server other than the compiled-in one.
- * `-e ORBITAL_AUTH_TOKEN <idToken>` sends that verify persona's token as `Authorization: Bearer`.
+ * `-e ORBITAL_AUTH_TOKEN <idToken>` sends that persona's token as `Authorization: Bearer`.
  * `-e ORBITAL_AUTH_EMULATOR_HOST <host:port>` points native sign-in at another Auth emulator.
  */
 class GeneratedActivity : ComponentActivity() {
@@ -1146,10 +1146,10 @@ class GeneratedActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         val debuggable = applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
         if (debuggable) {
-            VerifyBridgeLaunch.apiBaseUrl = intent.getStringExtra("ORBITAL_API_BASE_URL")?.takeIf { it.isNotEmpty() }
-            VerifyBridgeLaunch.initialRoute = intent.getStringExtra("ORBITAL_INITIAL_ROUTE")?.takeIf { it.isNotEmpty() }
-            VerifyBridgeLaunch.authToken = intent.getStringExtra("ORBITAL_AUTH_TOKEN")?.takeIf { it.isNotEmpty() }
-            VerifyBridgeLaunch.authEmulatorHost = intent.getStringExtra("ORBITAL_AUTH_EMULATOR_HOST")?.takeIf { it.isNotEmpty() }
+            DebugLaunch.apiBaseUrl = intent.getStringExtra("ORBITAL_API_BASE_URL")?.takeIf { it.isNotEmpty() }
+            DebugLaunch.initialRoute = intent.getStringExtra("ORBITAL_INITIAL_ROUTE")?.takeIf { it.isNotEmpty() }
+            DebugLaunch.authToken = intent.getStringExtra("ORBITAL_AUTH_TOKEN")?.takeIf { it.isNotEmpty() }
+            DebugLaunch.authEmulatorHost = intent.getStringExtra("ORBITAL_AUTH_EMULATOR_HOST")?.takeIf { it.isNotEmpty() }
         }
         setContent {
             GeneratedApp()
@@ -2374,9 +2374,6 @@ mod tests {
             vm.contains("kernelCalls.withLock { k.applyServerResponse(raw, alreadyDelivered) }")
         );
         assert!(vm.contains("kernelCalls.withLock { k.restore(requestTrait, null, snapshot) }"));
-        assert!(vm.contains(
-            "kernelCalls.withLock { k.abandonServerLeg(leg.targetTrait ?: requestTrait, seedEvent, error) }"
-        ));
         // Control: the unlocked dispatch spelling is gone.
         assert!(!vm.contains("val result = withContext(Dispatchers.Default) { k.dispatch("));
         assert!(!vm.contains("= k.applyServerResponse("));
@@ -3355,10 +3352,10 @@ mod tests {
         let gate = activity.find("if (debuggable").unwrap();
         let set_content = activity.find("setContent {").unwrap();
         assert!(gate < extra && extra < set_content);
-        assert!(activity.contains("VerifyBridgeLaunch.apiBaseUrl ="));
+        assert!(activity.contains("DebugLaunch.apiBaseUrl ="));
         let vm = generate_view_model_file(&module).content;
         assert!(vm.contains("var apiBaseUrl: String? = null"));
-        assert!(vm.contains("OrbitalApi(VerifyBridgeLaunch.apiBaseUrl ?: BASE_URL)"));
+        assert!(vm.contains("OrbitalApi(DebugLaunch.apiBaseUrl ?: BASE_URL)"));
     }
 
     #[test]
@@ -3373,7 +3370,7 @@ mod tests {
         assert!(gate < extra && extra < set_content);
         let vm = generate_view_model_file(&module).content;
         assert!(vm.contains("@Volatile var authToken: String? = null"));
-        assert!(vm.contains("VerifyBridgeLaunch.authToken?.let { client.authToken = it }"));
+        assert!(vm.contains("DebugLaunch.authToken?.let { client.authToken = it }"));
         let api = generate_api_client_file(&module).content;
         assert!(api.contains(
             r#"authToken?.let { requestBuilder.header("Authorization", "Bearer $it") }"#
@@ -3418,11 +3415,11 @@ mod tests {
     }
 
     #[test]
-    fn native_sign_in_control_the_verify_persona_token_keeps_the_stored_session_out() {
+    fn native_sign_in_control_the_persona_token_keeps_the_stored_session_out() {
         let vm = generate_view_model_file(&OirModule::new("TestApp", "1.0.0")).content;
         let adopt = vm.find("private fun adoptStoredSession()").unwrap();
         assert!(vm[adopt..].contains(
-            "if (VerifyBridgeLaunch.authToken == null) {\n            auth.loadStoredSession()"
+            "if (DebugLaunch.authToken == null) {\n            auth.loadStoredSession()"
         ));
     }
 
@@ -3564,7 +3561,7 @@ mod tests {
     fn page_access_viewer_is_authenticated_by_a_session_or_the_debug_persona_token() {
         let vm = generate_view_model_file(&OirModule::new("TestApp", "1.0.0")).content;
         assert!(
-            vm.contains("val hasLaunchToken: Boolean get() = VerifyBridgeLaunch.authToken != null")
+            vm.contains("val hasLaunchToken: Boolean get() = DebugLaunch.authToken != null")
         );
         let app = generate_app_file(&access_module(None)).content;
         assert!(app.contains("if (session != null || viewModel.hasLaunchToken)"));
@@ -3830,26 +3827,6 @@ mod tests {
     }
 
     #[test]
-    fn server_leg_failure_without_a_snapshot_abandons_and_with_one_restores() {
-        let vm = generate_view_model_file(&OirModule::new("TestApp", "1.0.0")).content;
-        let restore = vm.find("fun restore(error: String)").unwrap();
-        let tail = &vm[restore..];
-        let restored = tail
-            .find("k.restore(requestTrait, null, snapshot)")
-            .unwrap();
-        let else_at = tail.find("} else {").unwrap();
-        let abandon = tail
-            .find("k.abandonServerLeg(leg.targetTrait ?: requestTrait, seedEvent, error)")
-            .unwrap();
-        assert!(restored < else_at && else_at < abandon);
-        assert_eq!(
-            vm.matches("restore(").count() - vm.matches("k.restore(").count(),
-            4
-        );
-        assert_eq!(vm.matches("abandonServerLeg(").count(), 1);
-    }
-
-    #[test]
     fn initial_route_extra_is_read_in_debug_only_and_opens_through_the_navigation_sink() {
         let module = OirModule::new("TestApp", "1.0.0");
         let activity = generate_generated_activity_file(&module).content;
@@ -3908,7 +3885,7 @@ mod tests {
         let open = vm.find("fun openInitialRoute(startRoute: String)").unwrap();
         let body = &vm[open..];
         let early = body
-            .find("VerifyBridgeLaunch.initialRoute?.takeIf { it.isNotEmpty() } ?: return")
+            .find("DebugLaunch.initialRoute?.takeIf { it.isNotEmpty() } ?: return")
             .unwrap();
         let emit = body.find("_rootReplacements.emit(route)").unwrap();
         assert!(early < emit);
@@ -3934,24 +3911,6 @@ mod tests {
         let nav_tail = &app[nav..nav + app[nav..].find("LaunchedEffect(Unit)").unwrap()];
         assert!(nav_tail.contains("navController.navigate(path)\n"));
         assert!(!nav_tail.contains("popUpTo"));
-    }
-
-    #[test]
-    fn kernel_bridge_declares_the_abandon_native_with_a_jni_export() {
-        let bridge = include_str!("../renderers/compose/renderers/bridge/OrbitalKernelBridge.kt");
-        for (name, sig) in [
-            (
-                "nativeAbandonServerLeg",
-                "handle: Long, traitName: String, event: String?, error: String?",
-            ),
-        ] {
-            assert!(
-                bridge.contains(&format!("external fun {name}({sig})")),
-                "{name}"
-            );
-            let jni = format!("Java_generated_patterns_core_OrbitalKernelBridge_{name}");
-            assert!(orbital_ffi::jni_kernel_bridge::KERNEL_JNI_SYMBOLS.contains(&jni.as_str()));
-        }
     }
 
     /// Snapshots capture one fixed-width node (not the device root) with an

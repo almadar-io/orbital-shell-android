@@ -51,7 +51,7 @@ class OrbitalApi(baseUrl: String) {{
     private val baseUrl = baseUrl.trimEnd('/')
 
     /** Authorization hook: the signed-in session's ID token (`OrbitalAuth`), or the debuggable
-     *  build's verify persona. Read on every request and every live-push connect; unset = anonymous. */
+     *  build's persona. Read on every request and every live-push connect; unset = anonymous. */
     @Volatile var authToken: String? = null
 
     /** The server the host sign-in lists dev personas from and exchanges their custom token with. */

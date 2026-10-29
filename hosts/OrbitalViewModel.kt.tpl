@@ -58,7 +58,7 @@ import java.util.UUID
  * debuggable build. `apiBaseUrl == null` =
  * the compiled-in server URL stands.
  */
-object VerifyBridgeLaunch {{
+object DebugLaunch {{
     @Volatile var apiBaseUrl: String? = null
     @Volatile var initialRoute: String? = null
     @Volatile var authToken: String? = null
@@ -73,14 +73,14 @@ object VerifyBridgeLaunch {{
  * the dispatch mode produces one) is posted afterward and folded back.
  */
 class OrbitalViewModel(application: Application) : AndroidViewModel(application) {{
-    private val api: OrbitalApi = OrbitalApi(VerifyBridgeLaunch.apiBaseUrl ?: BASE_URL).also {{ client ->
-        VerifyBridgeLaunch.authToken?.let {{ client.authToken = it }}
+    private val api: OrbitalApi = OrbitalApi(DebugLaunch.apiBaseUrl ?: BASE_URL).also {{ client ->
+        DebugLaunch.authToken?.let {{ client.authToken = it }}
     }}
     private val kernelJson = Json {{ ignoreUnknownKeys = true }}
 
     /** Native sign-in (`OrbitalAuth`): the provider is build-declared; the session lives in the Keystore. */
     val auth = OrbitalAuth(
-        orbitalAuthConfig(application, VerifyBridgeLaunch.authEmulatorHost),
+        orbitalAuthConfig(application, DebugLaunch.authEmulatorHost),
         OkHttpAuthTransport(),
         KeystoreSessionStore(application),
         viewModelScope,
@@ -115,8 +115,8 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
         motion = snap.motion
     }}
 
-    /** A debuggable launch carrying the verify persona token is authenticated by it (the stored session is kept out in that case). */
-    val hasLaunchToken: Boolean get() = VerifyBridgeLaunch.authToken != null
+    /** A debuggable launch carrying the persona token is authenticated by it (the stored session is kept out in that case). */
+    val hasLaunchToken: Boolean get() = DebugLaunch.authToken != null
 
     private val _states = MutableStateFlow<Map<String, String>>(emptyMap())
     val states: StateFlow<Map<String, String>> = _states.asStateFlow()
@@ -187,7 +187,7 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
     private val _navigationEvents = MutableSharedFlow<String>()
     val navigationEvents = _navigationEvents
     private val _rootReplacements = MutableSharedFlow<String>()
-    /** Routes that replace the NavHost's whole back stack (the verify launch's initial route), never push. */
+    /** Routes that replace the NavHost's whole back stack (the debug launch's initial route), never push. */
     val rootReplacements = _rootReplacements
 
     private val _notifications = MutableSharedFlow<String>()
@@ -262,9 +262,9 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
     }}
 
     /** The stored session (Keystore) is adopted before the first INIT so the first requests are signed.
-     *  A debuggable launch carrying the verify persona token keeps it instead. */
+     *  A debuggable launch carrying the persona token keeps it instead. */
     private fun adoptStoredSession() {{
-        if (VerifyBridgeLaunch.authToken == null) {{
+        if (DebugLaunch.authToken == null) {{
             auth.loadStoredSession()
             sessionBinding.apply(auth.session.value)
         }}
@@ -306,13 +306,13 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
     }}
 
     /**
-     * `ORBITAL_INITIAL_ROUTE` (a verify launch) replaces the back stack's root with that page, as a
+     * `ORBITAL_INITIAL_ROUTE` (a debug launch) replaces the back stack's root with that page, as a
      * web `page.goto` replaces the page: no pushed destination, no back affordance. Consumed once;
      * the start route needs no replacement.
      */
     fun openInitialRoute(startRoute: String) {{
-        val route = VerifyBridgeLaunch.initialRoute?.takeIf {{ it.isNotEmpty() }} ?: return
-        VerifyBridgeLaunch.initialRoute = null
+        val route = DebugLaunch.initialRoute?.takeIf {{ it.isNotEmpty() }} ?: return
+        DebugLaunch.initialRoute = null
         if (route != startRoute) viewModelScope.launch {{ _rootReplacements.emit(route) }}
     }}
 
@@ -604,8 +604,6 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
                 val repaint = kernelCalls.withLock {{ k.restore(requestTrait, null, snapshot) }}
                 _states.value = _states.value + (requestTrait to snapshot.state)
                 if (repaint != null) foldResponse(repaint)
-            }} else {{
-                kernelCalls.withLock {{ k.abandonServerLeg(leg.targetTrait ?: requestTrait, seedEvent, error) }}
             }}
         }}
         api.postServerLeg(orbital, leg)
