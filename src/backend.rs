@@ -863,12 +863,6 @@ fun GeneratedApp(viewModel: OrbitalViewModel = viewModel()) {{
     }}
 
     LaunchedEffect(Unit) {{
-        navController.currentBackStackEntryFlow.collect {{ entry ->
-            viewModel.onRouteChanged(entry.destination.route)
-        }}
-    }}
-
-    LaunchedEffect(Unit) {{
         viewModel.notifications.collect {{ message ->
             snackbarHostState.showSnackbar(message)
         }}
@@ -959,23 +953,15 @@ fun GeneratedPage(pageName: String, viewModel: OrbitalViewModel, traitNames: Lis
     val traitContentMap by viewModel.contentWithAwaiting.collectAsState()
     val mainOrder by viewModel.mainOrderWithAwaiting.collectAsState()
     val lastMainWriter by viewModel.lastMainWriter.collectAsState()
-    val paintGeneration by viewModel.paintGeneration.collectAsState()
-    LaunchedEffect(paintGeneration) {{
-        withFrameNanos {{ }}
-        viewModel.reportPainted(paintGeneration)
-    }}
 
     // Bound traits with a live Main-role render, in first-write order. The trait
-    // events fall back to (and the verify bridge routes to) is the most recent
+    // events fall back to is the most recent
     // writer, else the last live trait, else the first declared one.
     val liveTraits = mainOrder.filter {{ it in traitNames }}
     val traitName = lastMainWriter?.takeIf {{ it in liveTraits }} ?: liveTraits.lastOrNull() ?: traitNames.firstOrNull() ?: ""
 
     LaunchedEffect(Unit) {{
         traitNames.filter {{ it.isNotEmpty() }}.forEach {{ viewModel.initTrait(it) }}
-    }}
-    LaunchedEffect(traitName) {{
-        if (traitName.isNotEmpty()) viewModel.activePageTrait = traitName
     }}
 
     // The page body stacks every live writer's Main-role render, each spliced
@@ -1150,9 +1136,7 @@ import androidx.activity.compose.setContent
 /**
  * Generated entry activity for the Android shell.
  *
- * `orb verify` starts the in-app verify bridge with
- * `am start -e ORBITAL_VERIFY_BRIDGE 1 [-e ORBITAL_VERIFY_PORT <port>]` (default 7357); the
- * extras are honoured only in a debuggable build and read before the view model exists.
+ * Launch extras are honoured only in a debuggable build and read before the view model exists.
  * `-e ORBITAL_API_BASE_URL <url>` points the app at a server other than the compiled-in one.
  * `-e ORBITAL_AUTH_TOKEN <idToken>` sends that verify persona's token as `Authorization: Bearer`.
  * `-e ORBITAL_AUTH_EMULATOR_HOST <host:port>` points native sign-in at another Auth emulator.
@@ -1166,9 +1150,6 @@ class GeneratedActivity : ComponentActivity() {
             VerifyBridgeLaunch.initialRoute = intent.getStringExtra("ORBITAL_INITIAL_ROUTE")?.takeIf { it.isNotEmpty() }
             VerifyBridgeLaunch.authToken = intent.getStringExtra("ORBITAL_AUTH_TOKEN")?.takeIf { it.isNotEmpty() }
             VerifyBridgeLaunch.authEmulatorHost = intent.getStringExtra("ORBITAL_AUTH_EMULATOR_HOST")?.takeIf { it.isNotEmpty() }
-        }
-        if (debuggable && intent.getStringExtra("ORBITAL_VERIFY_BRIDGE") == "1") {
-            VerifyBridgeLaunch.port = intent.getStringExtra("ORBITAL_VERIFY_PORT")?.toIntOrNull() ?: 7357
         }
         setContent {
             GeneratedApp()
@@ -1807,28 +1788,6 @@ mod tests {
         assert!(
             modal.contains("Box(modifier = Modifier.verificationWindowRoot())"),
             "a Dialog is its own window: its test tags need their own resource-id root"
-        );
-    }
-
-    #[test]
-    fn the_bridge_is_idle_only_once_the_page_drew_the_last_fold() {
-        let vm = generate_view_model_file(&awaiting_module()).content;
-        let fold = vm.find("private suspend fun foldResponse(").unwrap();
-        let bump = vm[fold..]
-            .find("_paintGeneration.value += 1")
-            .expect("every fold bumps the generation");
-        let folded = vm[fold..]
-            .find("kernel?.setVerifyFolded(_paintGeneration.value)")
-            .unwrap();
-        assert!(bump < folded);
-        let app = generate_app_file(&awaiting_module()).content;
-        assert!(app.contains(
-            "LaunchedEffect(paintGeneration) {\n        withFrameNanos { }\n        viewModel.reportPainted(paintGeneration)"
-        ), "reported only after a frame was drawn");
-        assert_eq!(
-            app.matches("viewModel.reportPainted(").count(),
-            1,
-            "control: one reporter per page"
         );
     }
 
@@ -2519,38 +2478,6 @@ mod tests {
             .expect("initAllTraits must declare the mount");
         let first_init = content.find(r#"sendEvent(trait, "INIT")"#).unwrap();
         assert!(remount < first_init, "remount must precede the INIT loop");
-    }
-
-    /// The bridge is told the host is mounting before the first `INIT` and mounted after the last,
-    /// so `/idle` cannot answer idle between the app launching and its INIT legs being counted.
-    #[test]
-    fn init_all_traits_brackets_the_init_loop_with_verify_ready() {
-        let module = OirModule::new("TestApp", "1.0.0");
-        let content = generate_view_model_file(&module).content;
-        let not_ready = content
-            .find("kernel?.setVerifyReady(false)")
-            .expect("ready=false");
-        let remount = content.find("kernel?.remount(TRAITS_WITH_INIT)").unwrap();
-        let first_init = content.find(r#"sendEvent(trait, "INIT")"#).unwrap();
-        let ready = content
-            .find("kernel?.setVerifyReady(true)")
-            .expect("ready=true");
-        assert!(not_ready < remount && remount < first_init && first_init < ready);
-        assert_eq!(
-            content.matches("setVerifyReady(").count(),
-            4,
-            "only the INIT brackets (app mount + a gated page mount) flip readiness"
-        );
-        let gated = content.find("fun mountGatedPage").unwrap();
-        let tail = &content[gated..];
-        assert!(
-            tail.find("setVerifyReady(false)").unwrap()
-                < tail.find("kernel?.mount(pending)").unwrap()
-        );
-        assert!(
-            tail.find(r#"sendEvent(trait, "INIT")"#).unwrap()
-                < tail.find("setVerifyReady(true)").unwrap()
-        );
     }
 
     /// Every `clientEffectsByTrait` entry's `effect` must be routed through the
@@ -3328,37 +3255,6 @@ mod tests {
     }
 
     #[test]
-    fn verify_bridge_starts_only_from_a_debuggable_activity_launch_extra() {
-        let module = OirModule::new("TestApp", "1.0.0");
-        let activity = generate_generated_activity_file(&module).content;
-        assert!(activity.contains("ApplicationInfo.FLAG_DEBUGGABLE"));
-        assert!(activity.contains(r#"intent.getStringExtra("ORBITAL_VERIFY_BRIDGE") == "1""#));
-        assert!(activity
-            .contains(r#"intent.getStringExtra("ORBITAL_VERIFY_PORT")?.toIntOrNull() ?: 7357"#));
-        let gate = activity.find("if (debuggable &&").unwrap();
-        let assign = activity.find("VerifyBridgeLaunch.port =").unwrap();
-        let set_content = activity.find("setContent {").unwrap();
-        assert!(
-            gate < assign && assign < set_content,
-            "the request must be recorded before the view model exists"
-        );
-    }
-
-    #[test]
-    fn view_model_starts_the_bridge_after_kernel_create_and_before_init() {
-        let module = OirModule::new("TestApp", "1.0.0");
-        let vm = generate_view_model_file(&module).content;
-        let created = vm.find("kernel = created").unwrap();
-        let start = vm
-            .find("VerifyBridgeLaunch.port?.let { startVerifyBridge(created, it) }")
-            .unwrap();
-        let ready = vm.find("kernelReady.complete(Unit)").unwrap();
-        assert!(created < start && start < ready);
-        assert!(vm.contains("object VerifyBridgeLaunch"));
-        assert!(vm.contains("import generated.patterns.core.OrbitalVerifyDispatchListener"));
-    }
-
-    #[test]
     fn view_model_tracks_live_main_writers_in_first_write_order() {
         let view_model = generate_view_model_file(&OirModule::new("TestApp", "1.0.0")).content;
         assert!(view_model
@@ -3423,54 +3319,17 @@ mod tests {
         assert!(app.contains(
             "val traitName = lastMainWriter?.takeIf { it in liveTraits } ?: liveTraits.lastOrNull() ?: traitNames.firstOrNull() ?: \"\""
         ));
-        assert!(app.contains("LaunchedEffect(traitName) {\n        if (traitName.isNotEmpty()) viewModel.activePageTrait = traitName"));
     }
 
     #[test]
-    fn verify_dispatch_routes_through_send_event_with_scope_or_active_page() {
-        let module = OirModule::new("TestApp", "1.0.0");
-        let vm = generate_view_model_file(&module).content;
-        assert!(vm.contains("val trait = traitScope ?: activePageTrait"));
-        assert!(vm.contains("sendEvent(trait, event, payload)"));
-        assert!(vm.contains("override fun onVerifyDispatch(traitScope: String?, event: String, payloadJson: String?)"));
-    }
-
-    #[test]
-    fn page_publishes_its_trait_and_root_exposes_test_tags_as_resource_ids() {
+    fn root_exposes_test_tags_as_resource_ids() {
         let module = OirModule::new("TestApp", "1.0.0");
         let app = generate_app_file(&module).content;
-        assert!(app.contains("viewModel.activePageTrait = traitName"));
         assert!(app.contains("semantics { testTagsAsResourceId = true }"));
         assert!(app.contains("import androidx.compose.ui.semantics.testTagsAsResourceId"));
         assert!(
             app.contains("@OptIn(ExperimentalComposeUiApi::class)\n@Composable\nfun GeneratedApp")
         );
-    }
-
-    #[test]
-    fn kernel_bridge_declares_a_native_for_every_verify_bridge_symbol() {
-        let bridge = include_str!("../renderers/compose/renderers/bridge/OrbitalKernelBridge.kt");
-        for name in [
-            "nativeVerifyBridgeStart",
-            "nativeVerifyBridgeStop",
-            "nativeVerifyBridgeSetDispatchCallback",
-            "nativeVerifyBridgeSetRoute",
-            "nativeVerifyBridgeSetReady",
-        ] {
-            assert!(
-                bridge.contains(&format!("external fun {name}(")),
-                "missing {name}"
-            );
-            let jni = format!("Java_generated_patterns_core_OrbitalKernelBridge_{name}");
-            assert!(
-                orbital_ffi::jni_kernel_bridge::KERNEL_JNI_SYMBOLS.contains(&jni.as_str()),
-                "{jni} not exported"
-            );
-        }
-        assert!(bridge.contains("interface OrbitalVerifyDispatchListener"));
-        assert!(bridge.contains(
-            "fun onVerifyDispatch(traitScope: String?, event: String, payloadJson: String?)"
-        ));
     }
 
     /// Item 2 of G-ORB-COMPILER-038 stays open: the envelope copies the node's own
@@ -4078,24 +3937,13 @@ mod tests {
     }
 
     #[test]
-    fn route_is_published_from_the_nav_back_stack_when_the_verify_bridge_is_requested() {
-        let app = generate_app_file(&OirModule::new("TestApp", "1.0.0")).content;
-        assert!(app.contains("navController.currentBackStackEntryFlow.collect"));
-        assert!(app.contains("viewModel.onRouteChanged(entry.destination.route)"));
-        let vm = generate_view_model_file(&OirModule::new("TestApp", "1.0.0")).content;
-        assert!(vm.contains("if (VerifyBridgeLaunch.port != null) kernel?.setVerifyRoute(route)"));
-        assert!(vm.contains("currentRoute?.let { k.setVerifyRoute(it) }"));
-    }
-
-    #[test]
-    fn kernel_bridge_declares_abandon_and_set_route_natives_with_jni_exports() {
+    fn kernel_bridge_declares_the_abandon_native_with_a_jni_export() {
         let bridge = include_str!("../renderers/compose/renderers/bridge/OrbitalKernelBridge.kt");
         for (name, sig) in [
             (
                 "nativeAbandonServerLeg",
                 "handle: Long, traitName: String, event: String?, error: String?",
             ),
-            ("nativeVerifyBridgeSetRoute", "handle: Long, route: String?"),
         ] {
             assert!(
                 bridge.contains(&format!("external fun {name}({sig})")),

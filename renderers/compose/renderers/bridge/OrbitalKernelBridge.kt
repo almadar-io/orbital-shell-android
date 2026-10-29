@@ -61,7 +61,7 @@ object OrbitalKernelBridge {
     /** Roll a trait back; returns the repaint (`KernelEventResponse` JSON) the rollback owes bound traits. */
     external fun nativeRestore(handle: Long, traitName: String, entityId: String?, snapshotJson: String): String?
 
-    /** A server leg failed at transport level with no snapshot to restore: lowers the verify bridge's `pending`. Inert in release builds. */
+    /** A server leg failed at transport level with no snapshot to restore: Does nothing: the kernel keeps no record of an abandoned leg. */
     external fun nativeAbandonServerLeg(handle: Long, traitName: String, event: String?, error: String?)
 
     /** The `KernelFrameDelta` JSON a painter at version [since] of the kernel's frames needs. */
@@ -112,35 +112,6 @@ object OrbitalKernelBridge {
 
     /** The handle's last recorded error message. */
     external fun nativeLastError(handle: Long): String
-
-    /**
-     * Start the verify bridge (orbital-ffi `verify-bridge`) on 127.0.0.1:[port]; returns the
-     * bound port, 0 on failure (read [nativeLastError]). Inert (0) unless the library was
-     * built with `make android-lib VERIFY=1`.
-     */
-    external fun nativeVerifyBridgeStart(handle: Long, port: Int): Int
-
-    external fun nativeVerifyBridgeStop(handle: Long)
-
-    /** Register (or, with null, clear) the listener the bridge's `/send` calls on the bridge thread. */
-    external fun nativeVerifyBridgeSetDispatchCallback(handle: Long, listener: OrbitalVerifyDispatchListener?): Boolean
-
-    /** Publish the current route for the bridge's `/snapshot` and `/route`; null clears it. */
-    external fun nativeVerifyBridgeSetRoute(handle: Long, route: String?): Boolean
-
-    /** Mark the host mounting (false) or mounted (true: every page-mount `INIT` dispatched); `/idle` is never idle while mounting. */
-    external fun nativeVerifyBridgeSetReady(handle: Long, ready: Boolean): Boolean
-
-    /** The view state now holds render generation `generation`; `/idle` waits for its paint. */
-    external fun nativeVerifyBridgeFolded(handle: Long, generation: Long): Boolean
-
-    /** The page drew render generation `generation`. */
-    external fun nativeVerifyBridgePainted(handle: Long, generation: Long): Boolean
-}
-
-/** Host hook for the verify bridge's `/send`; `traitScope`/`payloadJson` are null when absent. */
-interface OrbitalVerifyDispatchListener {
-    fun onVerifyDispatch(traitScope: String?, event: String, payloadJson: String?)
 }
 
 // MARK: - Wire models (mirror orbital-core's canonical EventResponse/EventRequest/
@@ -577,22 +548,4 @@ class OrbitalKernel private constructor(private val handle: Long) {
     fun mount(traits: Collection<String>) {
         OrbitalKernelBridge.nativeMount(handle, kernelJson.encodeToString(traits.toList()))
     }
-
-    /** Starts the verify bridge; returns the bound port, 0 on failure (read [lastError]). Debuggable builds only. */
-    fun startVerifyBridge(port: Int): Int = OrbitalKernelBridge.nativeVerifyBridgeStart(handle, port)
-
-    fun stopVerifyBridge() {
-        OrbitalKernelBridge.nativeVerifyBridgeStop(handle)
-    }
-
-    fun setVerifyDispatchListener(listener: OrbitalVerifyDispatchListener?): Boolean =
-        OrbitalKernelBridge.nativeVerifyBridgeSetDispatchCallback(handle, listener)
-
-    fun setVerifyRoute(route: String?): Boolean = OrbitalKernelBridge.nativeVerifyBridgeSetRoute(handle, route)
-
-    fun setVerifyReady(ready: Boolean): Boolean = OrbitalKernelBridge.nativeVerifyBridgeSetReady(handle, ready)
-
-    fun setVerifyFolded(generation: Long): Boolean = OrbitalKernelBridge.nativeVerifyBridgeFolded(handle, generation)
-
-    fun setVerifyPainted(generation: Long): Boolean = OrbitalKernelBridge.nativeVerifyBridgePainted(handle, generation)
 }

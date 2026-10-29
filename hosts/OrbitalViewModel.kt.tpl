@@ -23,7 +23,6 @@ import generated.patterns.core.OrbitalAuth
 import generated.patterns.core.OrbitalAuthSession
 import generated.patterns.core.OrbitalKernel
 import generated.patterns.core.OrbitalSessionBinding
-import generated.patterns.core.OrbitalVerifyDispatchListener
 import generated.patterns.core.ThemeTokensJson
 import generated.patterns.core.orbitalAuthConfig
 import kotlinx.coroutines.CompletableDeferred
@@ -55,13 +54,11 @@ import kotlinx.serialization.json.jsonPrimitive
 import java.util.UUID
 
 /**
- * Set by `GeneratedActivity` from the launch Intent extras (`ORBITAL_VERIFY_BRIDGE=1`,
- * `ORBITAL_VERIFY_PORT`, `ORBITAL_API_BASE_URL`, `ORBITAL_INITIAL_ROUTE`, `ORBITAL_AUTH_EMULATOR_HOST`) BEFORE the view model exists, and only in a
- * debuggable build. `port == null` = the verify bridge was not requested; `apiBaseUrl == null` =
+ * Set by `GeneratedActivity` from the launch Intent extras (`ORBITAL_API_BASE_URL`, `ORBITAL_INITIAL_ROUTE`, `ORBITAL_AUTH_EMULATOR_HOST`) BEFORE the view model exists, and only in a
+ * debuggable build. `apiBaseUrl == null` =
  * the compiled-in server URL stands.
  */
 object VerifyBridgeLaunch {{
-    @Volatile var port: Int? = null
     @Volatile var apiBaseUrl: String? = null
     @Volatile var initialRoute: String? = null
     @Volatile var authToken: String? = null
@@ -247,7 +244,6 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
                 return@launch
             }}
             kernel = created
-            VerifyBridgeLaunch.port?.let {{ startVerifyBridge(created, it) }}
             val snap = created.snapshot()
             withContext(Dispatchers.Main) {{
                 if (snap.states.isNotEmpty()) {{
@@ -295,14 +291,6 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {{ runCatching {{ auth.refreshIfNeeded() }} }}
     }}
 
-    @Volatile private var currentRoute: String? = null
-
-    /** Called on every navigation change; the verify bridge serves the latest route in `/snapshot` and `/route`. */
-    fun onRouteChanged(route: String?) {{
-        currentRoute = route
-        if (VerifyBridgeLaunch.port != null) kernel?.setVerifyRoute(route)
-    }}
-
     /**
      * Routes a renderer-dispatched [NAVIGATE_EVENT] envelope (`actionPayload.url`) into the same
      * `navigationEvents` sink the kernel `navigate` effect emits to.
@@ -326,40 +314,6 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
         val route = VerifyBridgeLaunch.initialRoute?.takeIf {{ it.isNotEmpty() }} ?: return
         VerifyBridgeLaunch.initialRoute = null
         if (route != startRoute) viewModelScope.launch {{ _rootReplacements.emit(route) }}
-    }}
-
-    /** Set by `GeneratedPage`: the trait a verify-bridge `/send` without a `traitScope` routes to, as a tap on the visible page would. */
-    @Volatile var activePageTrait: String? = null
-
-    private fun startVerifyBridge(k: OrbitalKernel, port: Int) {{
-        val bound = k.startVerifyBridge(port)
-        if (bound == 0) {{
-            android.util.Log.e("Orbital", "verify bridge failed to start on $port: ${{k.lastError}}")
-            return
-        }}
-        android.util.Log.i("Orbital", "verify bridge listening on 127.0.0.1:$bound")
-        currentRoute?.let {{ k.setVerifyRoute(it) }}
-        k.setVerifyDispatchListener(object : OrbitalVerifyDispatchListener {{
-            override fun onVerifyDispatch(traitScope: String?, event: String, payloadJson: String?) {{
-                viewModelScope.launch {{ handleVerifyDispatch(traitScope, event, payloadJson) }}
-            }}
-        }})
-    }}
-
-    /** A bridge `/send` takes the SAME entry point a renderer's `onEvent` ends in. */
-    private fun handleVerifyDispatch(traitScope: String?, event: String, payloadJson: String?) {{
-        val trait = traitScope ?: activePageTrait
-        if (trait == null) {{
-            android.util.Log.e("Orbital", "verify send $event dropped: no traitScope and no active page")
-            return
-        }}
-        val payload = payloadJson?.let {{
-            runCatching {{ kernelJson.parseToJsonElement(it) }}.getOrElse {{
-                android.util.Log.e("Orbital", "verify send $event dropped: payload is not valid json")
-                return
-            }}
-        }}
-        sendEvent(trait, event, payload)
     }}
 
     /** Ignore a broadcast this SAME client originated (already realized
@@ -405,13 +359,11 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
     fun initAllTraits() {{
         viewModelScope.launch {{
             kernelReady.await()
-            kernel?.setVerifyReady(false)
             kernel?.remount(TRAITS_WITH_INIT)
             TRAITS_WITH_INIT.forEach {{ trait ->
                 initTrait(trait)
                 sendEvent(trait, "INIT")
             }}
-            kernel?.setVerifyReady(true)
         }}
     }}
 
@@ -428,14 +380,12 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
             kernelReady.await()
             val pending = GATED_PAGE_TRAITS[path].orEmpty().filter {{ gatedInitViewer[it] != viewer }}
             if (pending.isEmpty()) return@launch
-            kernel?.setVerifyReady(false)
             kernel?.mount(pending)
             pending.forEach {{ trait ->
                 gatedInitViewer[trait] = viewer
                 initTrait(trait)
                 sendEvent(trait, "INIT")
             }}
-            kernel?.setVerifyReady(true)
         }}
     }}
 
@@ -626,12 +576,6 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
             _notifications.emit(response.error ?: response.guardFailed ?: "Event failed")
         }}
         _paintGeneration.value += 1
-        kernel?.setVerifyFolded(_paintGeneration.value)
-    }}
-
-    /** The page drew render generation `generation` (verify bridge: idle only once the screen matches the kernel). */
-    fun reportPainted(generation: Long) {{
-        kernel?.setVerifyPainted(generation)
     }}
 
     /**
