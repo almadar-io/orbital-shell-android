@@ -33,7 +33,7 @@ fun TrendIndicatorRenderer(
         val formatted = if (hasValue) (if (value > 0f) "+" else "") + formatter.format(value / 100.0) else ""
         val description = props.string("label", direction + (if (formatted.isNotEmpty()) " " + formatted else ""))
         Row(
-            modifier = modifier.almadarLabel(description),
+            modifier = modifier.almadarStatus(description),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(almadarSpaceFor("xs"))
         ) {

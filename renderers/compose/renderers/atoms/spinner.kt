@@ -36,10 +36,10 @@ fun SpinnerRenderer(
     }
     if (props.bool("overlay")) {
         Box(
-            modifier = modifier.fillMaxSize().background(palette.background.copy(alpha = 0.6f)).almadarLabel(description),
+            modifier = modifier.fillMaxSize().background(palette.background.copy(alpha = 0.6f)).almadarStatus(description),
             contentAlignment = Alignment.Center
         ) { indicator() }
     } else {
-        Box(modifier = modifier.almadarLabel(description), contentAlignment = Alignment.Center) { indicator() }
+        Box(modifier = modifier.almadarStatus(description), contentAlignment = Alignment.Center) { indicator() }
     }
 }

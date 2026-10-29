@@ -20,7 +20,7 @@ fun DocBreadcrumbRenderer(
 ) {
     val items = props.array("items").mapNotNull { it as? JsonObject }
     FlowRow(
-        modifier = modifier.fillMaxWidth().almadarLabel(props.string("aria-label", "Breadcrumb")),
+        modifier = modifier.fillMaxWidth().almadarLandmark(props.string("aria-label", "Breadcrumb")),
         horizontalArrangement = Arrangement.spacedBy(almadarSpaceFor("xs")),
         verticalArrangement = Arrangement.spacedBy(almadarSpaceFor("xs"))
     ) {

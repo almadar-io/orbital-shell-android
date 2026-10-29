@@ -147,7 +147,7 @@ fun SkeletonRenderer(
         }
     }
     if ((specNode as? JsonPrimitive)?.contentOrNull != "none") {
-        Box(modifier = modifier.fillMaxWidth().almadarLabel(props.string("aria-label", "Loading"))) {
+        Box(modifier = modifier.fillMaxWidth().almadarStatus(props.string("aria-label", "Loading"))) {
             if (specNode == null) shape(props.string("variant", "text"), props) else node(specNode)
         }
     }

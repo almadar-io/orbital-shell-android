@@ -8,6 +8,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.*
 import androidx.compose.ui.unit.*
 import kotlinx.serialization.json.*
+import androidx.compose.foundation.selection.selectableGroup
 
 // tier: molecules — a grouped container styled by tokens only
 
@@ -33,7 +34,7 @@ fun LikertScaleRenderer(
         selected = almadarScalar(value) ?: ""
         if (changeEvent.isNotEmpty()) onEvent(changeEvent, eventEnvelope(props, JsonObject(mapOf("value" to value))))
     }
-    Column(modifier = modifier.fillMaxWidth().almadarLabel(props.string("aria-label", props.string("question", "Likert scale"))), verticalArrangement = Arrangement.spacedBy(almadarSpaceFor("sm"))) {
+    Column(modifier = modifier.fillMaxWidth().selectableGroup().almadarLabel(props.string("aria-label", props.string("question", "Likert scale"))), verticalArrangement = Arrangement.spacedBy(almadarSpaceFor("sm"))) {
         if (props.string("question").isNotEmpty()) AlmadarText(props.string("question"), weight = "medium")
         FlowRow(horizontalArrangement = Arrangement.spacedBy(almadarSpaceFor("md")), verticalArrangement = Arrangement.spacedBy(almadarSpaceFor("xs"))) {
             options.forEach { (value, label) ->

@@ -54,7 +54,7 @@ fun DocPaginationRenderer(
     if (prev == null && next == null) {
         Box(modifier = modifier)
     } else {
-        Row(modifier = modifier.fillMaxWidth().height(IntrinsicSize.Min).almadarLabel(props.string("aria-label")), horizontalArrangement = Arrangement.spacedBy(almadarSpaceFor("md"))) {
+        Row(modifier = modifier.fillMaxWidth().height(IntrinsicSize.Min).almadarLandmark(props.string("aria-label")), horizontalArrangement = Arrangement.spacedBy(almadarSpaceFor("md"))) {
             link(prev, false, Modifier.weight(1f).fillMaxHeight())
             link(next, true, Modifier.weight(1f).fillMaxHeight())
         }

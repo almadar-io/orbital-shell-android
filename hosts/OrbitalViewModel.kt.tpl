@@ -10,6 +10,9 @@ import generated.patterns.core.KernelDispatchResult
 import generated.patterns.core.KernelEventResponse
 import generated.patterns.core.KernelFrameOutcome
 import generated.patterns.core.KernelFrameResult
+import generated.patterns.core.KernelFrameApply
+import generated.patterns.core.KernelFrameView
+import generated.patterns.core.KernelFramesResync
 import generated.patterns.core.KernelResolvedTheme
 import generated.patterns.core.KernelServerLeg
 import generated.patterns.core.KernelTraitEventPair
@@ -99,6 +102,11 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
         themeMode = if (theme.mode == "dark") ColorMode.Dark else ColorMode.Light
     }}
 
+    /** The view lifecycle's report that a trait's rendered output entered or left the screen (`[visible]` ticks, EXEC-TICK-4). */
+    fun setTraitOnScreen(traitName: String, onScreen: Boolean) {{
+        kernel?.setTraitOnScreen(traitName, onScreen)
+    }}
+
     /** The host's `toggleMode` (the web `useTheme()` context): asks the kernel for the opposite mode
      *  (`orbital_kernel_set_theme_mode`) and re-resolves the theme from its snapshot. */
     fun toggleThemeMode() {{
@@ -174,6 +182,8 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
     private val _entityData = MutableStateFlow<Map<String, List<JsonElement>>>(emptyMap())
     val entityData: StateFlow<Map<String, List<JsonElement>>> = _entityData.asStateFlow()
 
+    /** The kernel's frames as last painted, with the version of its record they are at (EXEC-DIST-7); `fields` mirrors them by frame key. */
+    private val frameView = KernelFrameView()
     private val _fields = MutableStateFlow<Map<String, JsonObject>>(emptyMap())
     val fields: StateFlow<Map<String, JsonObject>> = _fields.asStateFlow()
 
@@ -589,7 +599,7 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
 
     /**
      * Fold a [KernelEventResponse] into view-model
-     * state: merge `states`, land `data`/`entityByTrait`, and route every
+     * state: merge `states`, land `data` and the `frames` delta, and route every
      * `clientEffectsByTrait` entry's `effect` through [effectHandlers]
      * attributed by its own `traitName`. A `success = false` response surfaces
      * `error`/`guardFailed` as a notification — read for the message only,
@@ -600,10 +610,11 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
             _states.value = _states.value + response.states
         }}
         response.data?.let {{ data -> _entityData.value = _entityData.value + data }}
-        response.entityByTrait?.forEach {{ (trait, entity) ->
-            val obj = entity as? JsonObject ?: return@forEach
-            val existing = _fields.value[trait] ?: JsonObject(emptyMap())
-            _fields.value = _fields.value + (trait to JsonObject(existing + obj))
+        response.frames?.let {{ delta ->
+            if (frameView.apply(delta) == KernelFrameApply.GAP) {{
+                kernel?.framesSince(frameView.version)?.let {{ frameView.apply(it) }}
+            }}
+            _fields.value = frameView.frames
         }}
         response.clientEffectsByTrait.orEmpty().forEach {{ entry ->
             val obj = entry as? JsonObject ?: return@forEach
@@ -629,6 +640,11 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
      * trait's new state); a `success:false`/undecodable/transport failure
      * restores the pre-dispatch snapshot (when one exists — `persistedAwaited`
      * never produces one, nothing to restore there) and surfaces the error.
+     * Each leg the fold itself owes the host (an own continuation such as a
+     * refetch after a persist's success) is then posted and folded in turn, in
+     * order, until none is owed (EXEC-DIST-10), as the native `ClientKernel`
+     * does; a failed owed leg is surfaced and never rolls back the confirmed
+     * leg that owed it.
      */
     private suspend fun postServerLegAndFold(
         requestTrait: String,
@@ -666,6 +682,8 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
                             _states.value = _states.value + (pair.trait to pair.event)
                         }}
                         foldResponse(applied.response)
+                        applied.resync?.let {{ resync -> resyncFrames(resync, orbital, requestTrait, leg.clientId) }}
+                        postOwedLegs(applied.serverLegs, requestTrait)
                     }}
                 }} else {{
                     val message = decoded?.error ?: decoded?.guardFailed ?: "malformed server response"
@@ -679,6 +697,50 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
                 android.util.Log.e("Orbital", "postServerLeg failed: trait=$requestTrait event=${{leg.event}}", throwable)
                 _notifications.emit("Event failed ($requestTrait/${{leg.event}}): ${{throwable.message ?: throwable.toString()}}")
             }}
+    }}
+
+    /** Posts the legs a fold owes the host, first to last; a leg's own fold appends the legs it owes behind them. */
+    private suspend fun postOwedLegs(owed: List<KernelRoutedLeg>, requestTrait: String) {{
+        val k = kernel ?: return
+        val queue = ArrayDeque(owed)
+        while (queue.isNotEmpty()) {{
+            val next = queue.removeFirst()
+            val failure = api.postServerLeg(next.orbital, next.leg).fold(
+                onSuccess = {{ raw ->
+                    val decoded = runCatching {{ kernelJson.decodeFromString(KernelEventResponse.serializer(), raw) }}.getOrNull()
+                    if (decoded == null || !decoded.success) {{
+                        decoded?.error ?: decoded?.guardFailed ?: "malformed server response"
+                    }} else {{
+                        val applied = kernelCalls.withLock {{ k.applyServerResponse(raw, emptyList()) }}
+                        if (applied == null) {{
+                            k.lastError
+                        }} else {{
+                            applied.applied.forEach {{ pair -> _states.value = _states.value + (pair.trait to pair.event) }}
+                            foldResponse(applied.response)
+                            applied.resync?.let {{ resync -> resyncFrames(resync, next.orbital, requestTrait, next.leg.clientId) }}
+                            queue.addAll(applied.serverLegs)
+                            null
+                        }}
+                    }}
+                }},
+                onFailure = {{ throwable -> throwable.message ?: throwable.toString() }}
+            )
+            if (failure != null) {{
+                android.util.Log.e("Orbital", "owed leg failed: trait=$requestTrait event=${{next.leg.event}} error=$failure")
+                _notifications.emit("Event failed ($requestTrait/${{next.leg.event}}): $failure")
+                return
+            }}
+        }}
+    }}
+
+    /** The host numbered frames past the version the kernel holds: post `framesSince` and fold the snapshot it answers. */
+    private suspend fun resyncFrames(resync: KernelFramesResync, orbital: String, requestTrait: String, clientId: String?) {{
+        val k = kernel ?: return
+        val ask = KernelServerLeg(event = "\$FRAMES", targetTrait = requestTrait, clientId = clientId, framesSince = resync.since)
+        api.postServerLeg(orbital, ask).onSuccess {{ raw ->
+            val applied = kernelCalls.withLock {{ k.applyServerResponse(raw, emptyList()) }}
+            if (applied != null) foldResponse(applied.response)
+        }}
     }}
 
     companion object {{

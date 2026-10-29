@@ -35,6 +35,6 @@ fun StatusDotRenderer(
             .size(extent)
             .almadarAlpha(level)
             .background(color, MaterialTheme.shapes.large)
-            .almadarLabel(props.string("label", props.string("aria-label", status)))
+            .almadarStatus(props.string("label", props.string("aria-label", status)))
     )
 }

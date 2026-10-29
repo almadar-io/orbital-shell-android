@@ -8,6 +8,8 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * JNI bridge to the in-app `orbital_core::runtime::RuntimeKernel` (B5/B7,
@@ -62,6 +64,9 @@ object OrbitalKernelBridge {
     /** A server leg failed at transport level with no snapshot to restore: lowers the verify bridge's `pending`. Inert in release builds. */
     external fun nativeAbandonServerLeg(handle: Long, traitName: String, event: String?, error: String?)
 
+    /** The `KernelFrameDelta` JSON a painter at version [since] of the kernel's frames needs. */
+    external fun nativeFramesSince(handle: Long, since: Long): String?
+
     /** Run one scheduled tick; returns the resulting `KernelEventResponse` JSON, or null. */
     external fun nativeTick(handle: Long, traitName: String, tickName: String, entityId: String?): String?
 
@@ -88,6 +93,9 @@ object OrbitalKernelBridge {
 
     /** Set the kernel's tracked light/dark toggle (`"light"|"dark"`). */
     external fun nativeSetThemeMode(handle: Long, mode: String)
+
+    /** Report whether a trait's rendered output is on screen, so its `[visible]` ticks run only then. */
+    external fun nativeSetTraitOnScreen(handle: Long, traitName: String, onScreen: Boolean)
 
     /** Bind `@user` for every subsequent dispatch on this handle. */
     external fun nativeSetCurrentUser(handle: Long, userJson: String)
@@ -154,6 +162,63 @@ data class KernelEmittedEvent(
     val source: KernelEventSource? = null
 )
 
+/**
+ * Mirror of `orbital_core::FrameDelta` (EXEC-DIST-7): what a response changes in the frames its client holds, against the
+ * kernel's view record. Each op is `["put", frame, {fields}]`, `["set", {frame: {fields}}]`, `["del", frame]` or
+ * `["clear"]`. A delta without `session` is unversioned and applies wherever it lands.
+ */
+@Serializable
+data class KernelFrameDelta(
+    val session: String? = null,
+    val from: Long,
+    val to: Long,
+    val ops: List<JsonArray>
+) {
+    /** A snapshot starts from nothing: `from` 0 and a leading `clear`. */
+    val isSnapshot: Boolean get() = from == 0L && ops.firstOrNull()?.firstOrNull()?.jsonPrimitive?.contentOrNull == "clear"
+}
+
+enum class KernelFrameApply { APPLIED, STALE, GAP }
+
+/** The frames a view holds and the version of the kernel's record they are at; the kernel owns the reconciliation. */
+class KernelFrameView {
+    var session: String? = null
+        private set
+    var version: Long = 0
+        private set
+    var frames: Map<String, JsonObject> = emptyMap()
+        private set
+
+    fun apply(delta: KernelFrameDelta): KernelFrameApply {
+        val deltaSession = delta.session
+        if (deltaSession != null) {
+            if (!delta.isSnapshot) {
+                val current = deltaSession == session && delta.from == version
+                if (deltaSession == session && delta.to <= version && !current) return KernelFrameApply.STALE
+                if (!current) return KernelFrameApply.GAP
+            }
+            session = deltaSession
+            version = delta.to
+        }
+        for (op in delta.ops) {
+            when (op.firstOrNull()?.jsonPrimitive?.contentOrNull) {
+                "clear" -> frames = emptyMap()
+                "del" -> op.getOrNull(1)?.jsonPrimitive?.contentOrNull?.let { frames = frames - it }
+                "put" -> {
+                    val frame = op.getOrNull(1)?.jsonPrimitive?.contentOrNull
+                    val fields = op.getOrNull(2) as? JsonObject
+                    if (frame != null && fields != null) frames = frames + (frame to fields)
+                }
+                "set" -> (op.getOrNull(1) as? JsonObject)?.forEach { (frame, written) ->
+                    val fields = written as? JsonObject ?: return@forEach
+                    frames = frames + (frame to JsonObject((frames[frame] ?: JsonObject(emptyMap())) + fields))
+                }
+            }
+        }
+        return KernelFrameApply.APPLIED
+    }
+}
+
 /** Mirror of `orbital_core::EventResponse`. */
 @Serializable
 data class KernelEventResponse(
@@ -162,7 +227,7 @@ data class KernelEventResponse(
     val states: Map<String, String>,
     val emittedEvents: List<KernelEmittedEvent>,
     val data: Map<String, List<JsonElement>>? = null,
-    val entityByTrait: Map<String, JsonElement>? = null,
+    val frames: KernelFrameDelta? = null,
     val clientEffectsByTrait: List<JsonElement>? = null,
     val effectResults: List<JsonElement>? = null,
     val guardFailed: String? = null,
@@ -188,7 +253,9 @@ data class KernelServerLeg(
     val entityByTrait: Map<String, JsonElement>? = null,
     val behavior: String? = null,
     val delivery: JsonElement? = null,
-    val dispatchLog: JsonElement? = null
+    val dispatchLog: JsonElement? = null,
+    /** Not a dispatch: the client holds this version of the session's frames and asks what it misses. */
+    val framesSince: Long? = null
 )
 
 /** The `(trait, event)` that began a dispatch; a leg failure is reported against its event. */
@@ -307,9 +374,14 @@ sealed class KernelFrameOutcome {
 }
 
 @Serializable
-private data class KernelAppliedWire(val applied: List<List<String>> = emptyList(), val response: KernelEventResponse)
+private data class KernelAppliedWire(val applied: List<List<String>> = emptyList(), val response: KernelEventResponse, val resync: KernelFramesResync? = null, val serverLegs: List<KernelRoutedLeg> = emptyList())
 
-data class KernelAppliedResult(val applied: List<KernelTraitEventPair>, val response: KernelEventResponse)
+/** The host numbered frames past the version this kernel holds: ask for `framesSince(since)`. */
+@Serializable
+data class KernelFramesResync(val session: String, val since: Long)
+
+/** [serverLegs]: the legs the fold itself owes the host (an own continuation such as a refetch after a persist's success), to post and fold in turn. */
+data class KernelAppliedResult(val applied: List<KernelTraitEventPair>, val response: KernelEventResponse, val resync: KernelFramesResync? = null, val serverLegs: List<KernelRoutedLeg> = emptyList())
 
 /** [OrbitalKernel.snapshot] result: every trait's current state plus the
  * resolved `@currentTheme` (null only when the native call itself failed —
@@ -370,7 +442,13 @@ class OrbitalKernel private constructor(private val handle: Long) {
             ?: return null
         val wire = runCatching { kernelJson.decodeFromString(KernelAppliedWire.serializer(), raw) }.getOrNull()
             ?: return null
-        return KernelAppliedResult(decodePairs(wire.applied), wire.response)
+        return KernelAppliedResult(decodePairs(wire.applied), wire.response, wire.resync, wire.serverLegs)
+    }
+
+    /** The delta a painter at version [since] of this kernel's frames needs: empty when current, else a snapshot. */
+    fun framesSince(since: Long): KernelFrameDelta? {
+        val raw = OrbitalKernelBridge.nativeFramesSince(handle, since) ?: return null
+        return runCatching { kernelJson.decodeFromString(KernelFrameDelta.serializer(), raw) }.getOrNull()
     }
 
     fun restore(trait: String, entityId: String?, snapshot: KernelTraitSnapshot): KernelEventResponse? {
@@ -472,6 +550,10 @@ class OrbitalKernel private constructor(private val handle: Long) {
 
     fun setThemeMode(mode: String) {
         OrbitalKernelBridge.nativeSetThemeMode(handle, mode)
+    }
+
+    fun setTraitOnScreen(traitName: String, onScreen: Boolean) {
+        OrbitalKernelBridge.nativeSetTraitOnScreen(handle, traitName, onScreen)
     }
 
     fun setCurrentUser(json: String) {

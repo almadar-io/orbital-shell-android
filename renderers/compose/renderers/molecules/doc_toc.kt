@@ -22,7 +22,7 @@ fun DocTocRenderer(
     val palette = LocalAlmadarTheme.current.color
     val items = props.array("items").mapNotNull { it as? JsonObject }
     val activeId = props.string("activeId")
-    Column(modifier = modifier.fillMaxWidth().almadarLabel(props.string("aria-label", "Table of contents"))) {
+    Column(modifier = modifier.fillMaxWidth().almadarLandmark(props.string("aria-label", "Table of contents"))) {
         items.forEach { item ->
             val id = item.string("id")
             val active = id == activeId

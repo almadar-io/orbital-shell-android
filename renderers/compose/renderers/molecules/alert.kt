@@ -35,7 +35,7 @@ fun AlertRenderer(
     var dismissed by remember { mutableStateOf(false) }
     if (!dismissed) {
         Surface(
-            modifier = modifier.fillMaxWidth().almadarLabel(props.string("aria-label")),
+            modifier = modifier.fillMaxWidth().almadarStatus(props.string("aria-label")),
             color = palette.surface,
             shape = MaterialTheme.shapes.medium,
             border = androidx.compose.foundation.BorderStroke(LocalAlmadarGeometry.current.borderStandard, tone.solid)

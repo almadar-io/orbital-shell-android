@@ -70,7 +70,7 @@ fun DocSidebarRenderer(
             )
         }
     }
-    Column(modifier = modifier.fillMaxWidth().almadarLabel(props.string("aria-label", "Documentation navigation")), verticalArrangement = Arrangement.spacedBy(almadarSpaceFor("xs"))) {
+    Column(modifier = modifier.fillMaxWidth().almadarLandmark(props.string("aria-label", "Documentation navigation")), verticalArrangement = Arrangement.spacedBy(almadarSpaceFor("xs"))) {
         items.forEachIndexed { index, item -> Entry(item, 0, index.toString()) }
     }
 }

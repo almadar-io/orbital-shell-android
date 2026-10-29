@@ -88,9 +88,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.isTraversalGroup
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -215,6 +218,20 @@ internal fun almadarFieldColors(drawsOwnBorder: Boolean = false): TextFieldColor
 
 internal fun Modifier.almadarLabel(label: String): Modifier =
     if (label.isEmpty()) this else this.semantics { contentDescription = label }
+
+/** The `status` role: the node and its text are one announcement, and a change to it is announced politely. */
+internal fun Modifier.almadarStatus(label: String): Modifier =
+    this.semantics(mergeDescendants = true) {
+        if (label.isNotEmpty()) contentDescription = label
+        liveRegion = LiveRegionMode.Polite
+    }
+
+/** The `navigation` role: a named group that accessibility traversal visits as one unit. */
+internal fun Modifier.almadarLandmark(label: String): Modifier =
+    this.semantics {
+        if (label.isNotEmpty()) contentDescription = label
+        isTraversalGroup = true
+    }
 
 internal fun almadarActionId(eventKey: String, props: JsonElement): String =
     if (eventKey.isEmpty() || props.bool("local")) "" else VerificationIds.action(eventKey)

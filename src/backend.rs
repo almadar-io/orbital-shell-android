@@ -722,6 +722,15 @@ fn generate_app_file(module: &OirModule) -> GeneratedFile {
     } else {
         ""
     };
+    let not_found_navigation = module
+        .not_found_page()
+        .map(|p| {
+            format!(
+                "\n                navController.navigate(\"{}\")",
+                escape_double_quoted(&p.path)
+            )
+        })
+        .unwrap_or_default();
     let host_route = "                composable(OrbitalViewModel.HOST_SIGN_IN_ROUTE) { OrbitalSignInScreen(viewModel) }\n";
     let pages_block = if page_routes.is_empty() {
         format!("{host_route}                // no pages declared\n")
@@ -753,6 +762,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.key
@@ -835,7 +845,7 @@ fun GeneratedApp(viewModel: OrbitalViewModel = viewModel()) {{
             try {{
                 navController.navigate(path)
             }} catch (e: IllegalArgumentException) {{
-                android.util.Log.e("Orbital", "navigate to undeclared route $path", e)
+                android.util.Log.e("Orbital", "navigate to undeclared route $path", e){not_found_navigation}
             }}
         }}
     }}
@@ -974,6 +984,14 @@ fun GeneratedPage(pageName: String, viewModel: OrbitalViewModel, traitNames: Lis
     // `traitContent` changes, so a peer's later render re-splices reactively).
     val mainContents = liveTraits.mapNotNull {{ name ->
         traitContentMap[name]?.let {{ name to spliceContent(it, traitContentMap, name) }}
+    }}
+    mainContents.forEach {{ (name, _) ->
+        key(name) {{
+            DisposableEffect(name) {{
+                viewModel.setTraitOnScreen(name, true)
+                onDispose {{ viewModel.setTraitOnScreen(name, false) }}
+            }}
+        }}
     }}
     val modalSlot = uiSlots.entries
         .firstOrNull {{ slotRole(it.key) == SlotRole.Modal }}
@@ -2944,10 +2962,6 @@ mod tests {
         assert_eq!(kt_ty(&OirType::Date), "String");
         assert_eq!(kt_ty(&OirType::DateTime), "String");
         assert_eq!(
-            kt_ty(&OirType::Json),
-            "kotlinx.serialization.json.JsonElement"
-        );
-        assert_eq!(
             kt_ty(&OirType::SExpr),
             "kotlinx.serialization.json.JsonElement"
         );
@@ -3766,6 +3780,25 @@ mod tests {
         assert!(!vm.contains("ORBITAL_NAME"));
     }
 
+    /// A fold can owe the host legs of its own (a refetch after a persist's success): the view model posts and folds
+    /// them in order, queued behind each other, and a failed owed leg is surfaced without restoring the confirmed leg.
+    #[test]
+    fn view_model_posts_the_follow_on_legs_a_fold_owes() {
+        let module = OirModule::new("TestApp", "1.0.0");
+        let vm = generate_view_model_file(&module).content;
+        let start = vm.find("private suspend fun postServerLegAndFold").unwrap();
+        let end = vm[start..].find("private suspend fun postOwedLegs").unwrap();
+        assert!(vm[start..start + end].contains("postOwedLegs(applied.serverLegs, requestTrait)"));
+        let owed_start = vm.find("private suspend fun postOwedLegs").unwrap();
+        let owed_end = vm[owed_start..].find("private suspend fun resyncFrames").unwrap();
+        let owed = &vm[owed_start..owed_start + owed_end];
+        assert!(owed.contains("queue.addAll(applied.serverLegs)"));
+        assert!(owed.contains("queue.removeFirst()"));
+        assert!(!owed.contains("restore("));
+        let bridge = include_str!("../renderers/compose/renderers/bridge/OrbitalKernelBridge.kt");
+        assert!(bridge.contains("wire.resync, wire.serverLegs)"));
+    }
+
     #[test]
     fn every_server_leg_failure_branch_restores() {
         let module = OirModule::new("TestApp", "1.0.0");
@@ -3793,7 +3826,10 @@ mod tests {
         assert_eq!(vm.matches("private suspend fun foldResponse(").count(), 1);
         assert_eq!(vm.matches("effectHandlers.apply(effect,").count(), 1);
         let rejected = vm.find("val message = decoded?.error").unwrap();
-        assert!(!vm[rejected..].contains("foldResponse(applied.response)"));
+        let branch_end = rejected + vm[rejected..].find("private suspend fun").unwrap();
+        assert!(!vm[rejected..branch_end].contains("foldResponse(applied.response)"));
+        let resync = vm.find("private suspend fun resyncFrames(").unwrap();
+        assert!(vm[resync..].contains("foldResponse(applied.response)"), "control: the resync fold applies the snapshot");
     }
 
     #[test]
@@ -3988,6 +4024,26 @@ mod tests {
     }
 
     #[test]
+    fn an_undeclared_route_enters_the_not_found_page_when_one_is_declared() {
+        let mut module = OirModule::new("TestApp", "1.0.0");
+        module.pages.push(OirPage::new("Home", "/home"));
+        let sink_of = |module: &OirModule| {
+            let app = generate_app_file(module).content;
+            let at = app.find("viewModel.navigationEvents.collect").unwrap();
+            let end = app[at..].find("rootReplacements.collect").unwrap();
+            app[at..at + end].to_string()
+        };
+        assert!(!sink_of(&module).contains("navController.navigate(\"/missing\")"), "control: no notFound page, no fallback");
+        let mut missing = OirPage::new("Missing", "/missing");
+        missing.is_not_found = true;
+        module.pages.push(missing);
+        let sink = sink_of(&module);
+        let log = sink.find("navigate to undeclared route $path").unwrap();
+        let fallback = sink.find("navController.navigate(\"/missing\")").unwrap();
+        assert!(log < fallback);
+    }
+
+    #[test]
     fn no_initial_route_extra_means_the_sink_is_never_emitted_to() {
         let vm = generate_view_model_file(&OirModule::new("TestApp", "1.0.0")).content;
         let open = vm.find("fun openInitialRoute(startRoute: String)").unwrap();
@@ -4158,5 +4214,16 @@ mod tests {
             assert!(bridge.contains(&format!("external fun {sym}(")), "{sym}");
         }
         assert!(bridge.contains("fun frame(nowMs: Long): KernelFrameOutcome"));
+    }
+
+    #[test]
+    fn a_live_trait_view_reports_its_presence_to_the_kernel_from_its_compose_lifecycle() {
+        let module = OirModule::new("TestApp", "1.0.0");
+        let app = generate_app_file(&module).content;
+        assert!(app.contains("import androidx.compose.runtime.DisposableEffect"));
+        assert!(app.contains("viewModel.setTraitOnScreen(name, true)"));
+        assert!(app.contains("onDispose { viewModel.setTraitOnScreen(name, false) }"));
+        let vm = generate_view_model_file(&module).content;
+        assert!(vm.contains("kernel?.setTraitOnScreen(traitName, onScreen)"));
     }
 }
