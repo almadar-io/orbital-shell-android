@@ -14,7 +14,7 @@ import kotlinx.serialization.json.jsonPrimitive
 /**
  * Applies client-side effects the kernel handed back (each `KernelEventResponse
  * .clientEffectsByTrait` entry's `effect`, one `["render-ui", slot, config, props?, priority?]` /
- * `["navigate", path, params?, options?]` / `["navigate-back"]` tuple per
+ * `["navigate", path, params?, options?]` / `["navigate-back"]` / `["host-ask", op, args]` tuple per
  * entry — the canonical wire, `orbital_core::effects::ClientEffect`).
  * `traitContent` indexes every Main-role render by its SOURCE trait (never a
  * slot name) so `@trait.X` composition can resolve it. `sourceTrait` is the
@@ -33,6 +33,7 @@ class EffectHandlers(
     private val embeddedTraits: Set<String>,
     private val navigationEvents: MutableSharedFlow<String>,
     private val notifications: MutableSharedFlow<String>,
+    private val onHostAsk: (op: String, args: List<JsonElement>, completion: JsonElement?) -> Unit,
     private val onEmit: (trait: String, event: String, payload: JsonElement?) -> Unit
 ) {
     /**
@@ -89,6 +90,12 @@ class EffectHandlers(
             }
             "navigate-back" -> {
                 navController?.popBackStack()
+            }
+            "host-ask" -> {
+                // A `runsOn: client` host-port effect (`auth/sign-out`, `auth/sign-in`); the view model answers it or refuses it by name,
+                // and returns the answer of one that declared routes to its fourth element's trait.
+                val op = arr.getOrNull(1)?.jsonPrimitive?.contentOrNull ?: return
+                onHostAsk(op, arr.getOrNull(2)?.jsonArray ?: emptyList(), arr.getOrNull(3))
             }
             "notify" -> {
                 val title = arr.getOrNull(1)?.jsonPrimitive?.content ?: ""

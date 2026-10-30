@@ -20,6 +20,7 @@ import generated.patterns.core.KernelTraitSnapshot
 import generated.patterns.core.KeystoreSessionStore
 import generated.patterns.core.OkHttpAuthTransport
 import generated.patterns.core.OrbitalAuth
+import generated.patterns.core.OrbitalAuthException
 import generated.patterns.core.OrbitalAuthSession
 import generated.patterns.core.OrbitalKernel
 import generated.patterns.core.OrbitalSessionBinding
@@ -92,6 +93,83 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
 
     fun signOut() {{
         auth.signOut()
+    }}
+
+    /** Answers one `host-ask` client effect (`ClientEffect::HostAsk`): `auth/sign-out` ends the session and `auth/sign-in` signs in by email or custom token and returns its answer to `completion`; an ask this host has no action for, or one with arguments it does not take, is refused by name (and fails the ask's failure route). */
+    fun answerHostAsk(op: String, args: List<JsonElement>, completion: JsonElement?) {{
+        when (op) {{
+            "auth/sign-out" -> {{
+                if (args.isNotEmpty()) {{
+                    android.util.Log.e("Orbital", "host-ask auth/sign-out refused: it takes no arguments")
+                    return
+                }}
+                signOut()
+            }}
+            "auth/sign-in" -> viewModelScope.launch {{ answerSignIn(args, completion) }}
+            else -> {{
+                android.util.Log.e("Orbital", "host-ask $op refused: this host has no action for it")
+                returnHostAsk(completion, error = "$op: this host has no action for it", kind = "unavailable")
+            }}
+        }}
+    }}
+
+    private suspend fun answerSignIn(args: List<JsonElement>, completion: JsonElement?) {{
+        val request = args.singleOrNull() as? JsonObject
+        val method = (request?.get("method") as? JsonPrimitive)?.contentOrNull
+        if (request == null || method == null) {{
+            returnHostAsk(completion, error = "auth/sign-in takes one request object with a method", kind = "invalid")
+            return
+        }}
+        fun text(field: String): String? = (request[field] as? JsonPrimitive)?.contentOrNull?.takeIf {{ it.isNotEmpty() }}
+        try {{
+            when (method) {{
+                "email" -> {{
+                    val email = text("email")
+                    val password = text("password")
+                    if (request.size != 3 || email == null || password == null) {{
+                        returnHostAsk(completion, error = "auth/sign-in: email takes an email and a password", kind = "invalid")
+                        return
+                    }}
+                    auth.signInWithPassword(email, password)
+                }}
+                "customToken" -> {{
+                    val token = text("token")
+                    if (request.size != 2 || token == null) {{
+                        returnHostAsk(completion, error = "auth/sign-in: customToken takes a token", kind = "invalid")
+                        return
+                    }}
+                    auth.signInWithCustomToken(token)
+                }}
+                "google", "emailLink" -> {{
+                    returnHostAsk(completion, error = "auth/sign-in: this host has no $method sign-in", kind = "unavailable")
+                    return
+                }}
+                else -> {{
+                    returnHostAsk(completion, error = "auth/sign-in: method must be google, email, emailLink or customToken", kind = "invalid")
+                    return
+                }}
+            }}
+            val uid = auth.session.value?.uid
+            if (uid == null) {{
+                returnHostAsk(completion, error = "auth/sign-in: the provider returned no session", kind = "unavailable")
+                return
+            }}
+            returnHostAsk(completion, ok = mapOf("uid" to JsonPrimitive(uid)))
+        }} catch (e: OrbitalAuthException.Provider) {{
+            returnHostAsk(completion, error = e.message ?: "sign-in denied", kind = "denied")
+        }} catch (e: OrbitalAuthException) {{
+            returnHostAsk(completion, error = e.message ?: "sign-in unavailable", kind = "unavailable")
+        }}
+    }}
+
+    /** Returns a host ask's answer: dispatches the event of the outcome it reached to the asking trait, with the call's key. An ask that declared no route for the outcome fires nothing. */
+    private fun returnHostAsk(completion: JsonElement?, ok: Map<String, JsonElement>? = null, error: String = "", kind: String = "") {{
+        val declared = completion as? JsonObject ?: return
+        val trait = (declared["trait"] as? JsonPrimitive)?.contentOrNull ?: return
+        val event = ((if (ok != null) declared["success"] else declared["failure"]) as? JsonPrimitive)?.contentOrNull ?: return
+        val payload = (ok ?: mapOf("error" to JsonPrimitive(error), "kind" to JsonPrimitive(kind))).toMutableMap()
+        (declared["key"] as? JsonPrimitive)?.contentOrNull?.let {{ payload["key"] = JsonPrimitive(it) }}
+        sendEvent(trait, event, JsonObject(payload), (declared["entity"] as? JsonPrimitive)?.contentOrNull)
     }}
 
     private fun applyResolvedTheme(theme: KernelResolvedTheme) {{
@@ -225,7 +303,7 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
     /** The client kernel's server-leg collector is shared per handle, so every call that can drive a cascade runs one at a time, in arrival order. */
     private val kernelCalls = Mutex()
 
-    private val effectHandlers = EffectHandlers(_uiSlots, _traitContent, _mainOrder, _lastMainWriter, EMBEDDED_TRAITS, _navigationEvents, _notifications) {{
+    private val effectHandlers = EffectHandlers(_uiSlots, _traitContent, _mainOrder, _lastMainWriter, EMBEDDED_TRAITS, _navigationEvents, _notifications, this::answerHostAsk) {{
         trait, event, payload -> sendEvent(trait, event, payload)
     }}
 
@@ -401,7 +479,8 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
     fun sendEvent(
         trait: String,
         event: String,
-        payload: JsonElement? = null
+        payload: JsonElement? = null,
+        entityId: String? = null
     ) {{
         viewModelScope.launch {{
             val k = kernel
@@ -410,7 +489,7 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
                 return@launch
             }}
             val payloadJson = payload?.let {{ kernelJson.encodeToString(JsonElement.serializer(), it) }}
-            val result = kernelCalls.withLock {{ withContext(Dispatchers.Default) {{ k.dispatch(trait, null, event, payloadJson) }} }}
+            val result = kernelCalls.withLock {{ withContext(Dispatchers.Default) {{ k.dispatch(trait, entityId, event, payloadJson) }} }}
             if (result == null) {{
                 val err = k.lastError
                 android.util.Log.e("Orbital", "dispatch failed: trait=$trait event=$event error=$err")
@@ -688,8 +767,6 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
     companion object {{
         /** The event a renderer emits for a `navigatesTo` action or a nav item; `SlotContent` routes it to [navigate] before kernel dispatch. */
         const val NAVIGATE_EVENT = "NAVIGATE"
-        /** The system event `UI:SIGN_OUT`: the host ends the session, the kernel never sees it. */
-        const val SIGN_OUT_EVENT = "SIGN_OUT"
         /** The host's own sign-in route (`HOST_SIGN_IN_ROUTE`): no page declares it, the NavHost renders `OrbitalSignInScreen`. */
         const val HOST_SIGN_IN_ROUTE = "{host_sign_in_route}"
         private const val RESOLVED_SCHEMA_ASSET = "resolved_schema.json"

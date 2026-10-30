@@ -926,8 +926,6 @@ private fun SlotContent(
             {{ event, envelope ->
                 if (event == OrbitalViewModel.NAVIGATE_EVENT) {{
                     viewModel.navigate(envelope)
-                }} else if (event == OrbitalViewModel.SIGN_OUT_EVENT) {{
-                    viewModel.signOut()
                 }} else {{
                     val obj = envelope as? JsonObject
                     val source = obj?.get("sourceTrait")?.jsonPrimitive?.contentOrNull ?: traitName
@@ -3800,17 +3798,38 @@ mod tests {
         ));
     }
 
-    /// The system event `UI:SIGN_OUT` (`@almadar/core` `SYSTEM_UI_EVENTS`) ends the session in the
-    /// host and never reaches the kernel (G-PATTERN-SYNC-031).
+    /// `auth/sign-out` is a `host-ask` client effect the view model answers (G-ORB-589); the slot content no
+    /// longer intercepts a `SIGN_OUT` event name, so it reaches the kernel like every other event.
     #[test]
-    fn slot_content_routes_sign_out_to_the_session_before_kernel_dispatch() {
+    fn sign_out_is_a_host_ask_the_view_model_answers_not_an_event_the_slot_content_intercepts() {
         let app = generate_app_file(&OirModule::new("TestApp", "1.0.0")).content;
-        let branch = app.find("} else if (event == OrbitalViewModel.SIGN_OUT_EVENT) {").expect("sign-out branch");
-        let session = app.find("viewModel.signOut()").unwrap();
-        let other = app.find("viewModel.sendEvent(source, event, payload = payload)").unwrap();
-        assert!(branch < session && session < other);
+        assert!(!app.contains("signOut()") && !app.contains("SIGN_OUT_EVENT"), "{app}");
         let vm = generate_view_model_file(&OirModule::new("TestApp", "1.0.0")).content;
-        assert!(vm.contains("const val SIGN_OUT_EVENT = \"SIGN_OUT\""));
+        assert!(!vm.contains("SIGN_OUT_EVENT"));
+        assert!(vm.contains("EMBEDDED_TRAITS, _navigationEvents, _notifications, this::answerHostAsk)"));
+        let answer = vm.find("fun answerHostAsk(op: String, args: List<JsonElement>, completion: JsonElement?)").expect("the view model answers host asks");
+        let body = &vm[answer..];
+        let sign_out = body.find("\"auth/sign-out\" -> {").unwrap();
+        let sign_in = body.find("\"auth/sign-in\" -> viewModelScope.launch").unwrap();
+        let refuse = body.find("refused: this host has no action for it").unwrap();
+        assert!(sign_out < sign_in && sign_in < refuse, "an unknown op is refused after the ops this host answers");
+        let effects = generate_effect_handlers_file().content;
+        assert!(effects.contains("\"host-ask\" -> {") && effects.contains("onHostAsk(op, arr.getOrNull(2)?.jsonArray ?: emptyList(), arr.getOrNull(3))"));
+    }
+
+    /// `auth/sign-in` returns its answer to the asking trait on the route it declared (EXEC-DIST-13): a success carries
+    /// the viewer and the key, a failure `{ error, kind, key }`, and a method this host cannot run fails `unavailable`.
+    #[test]
+    fn sign_in_is_a_host_ask_whose_answer_returns_to_the_asking_trait_on_its_declared_route() {
+        let vm = generate_view_model_file(&OirModule::new("TestApp", "1.0.0")).content;
+        let at = vm.find("private suspend fun answerSignIn(").expect("the view model answers auth/sign-in");
+        let body = &vm[at..];
+        assert!(body.contains("auth.signInWithPassword(email, password)") && body.contains("auth.signInWithCustomToken(token)"));
+        assert!(body.contains("\"google\", \"emailLink\" -> {") && body.contains("kind = \"unavailable\""));
+        let ret = &vm[vm.find("private fun returnHostAsk(").unwrap()..];
+        assert!(ret.contains("else declared[\"failure\"]) as? JsonPrimitive)?.contentOrNull ?: return"), "an undeclared route fires nothing");
+        assert!(ret.contains("payload[\"key\"] = JsonPrimitive(it)"));
+        assert!(ret.contains("sendEvent(trait, event, JsonObject(payload), (declared[\"entity\"] as? JsonPrimitive)?.contentOrNull)"));
     }
 
     #[test]
