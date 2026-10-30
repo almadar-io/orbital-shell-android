@@ -2275,7 +2275,7 @@ mod tests {
         let module = OirModule::new("TestApp", "1.0.0");
         let content = generate_view_model_file(&module).content;
         assert!(content.contains("private var kernel: OrbitalKernel? = null"));
-        assert!(content.contains("val result = kernelCalls.withLock { withContext(Dispatchers.Default) { k.dispatch(trait, null, event, payloadJson) } }"));
+        assert!(content.contains("val result = kernelCalls.withLock { withContext(Dispatchers.Default) { k.dispatch(trait, entityId, event, payloadJson) } }"));
         assert!(content.contains("KernelDispatchMode.hybridClientOnly ->"));
         assert!(content.contains("KernelDispatchMode.runtimeOptimistic ->"));
         assert!(content.contains("KernelDispatchMode.persistedAwaited ->"));
@@ -2366,7 +2366,7 @@ mod tests {
         let vm = generate_view_model_file(&module).content;
         assert!(vm.contains("private val kernelCalls = Mutex()"));
         assert!(vm.contains(
-            "kernelCalls.withLock { withContext(Dispatchers.Default) { k.dispatch(trait, null, event, payloadJson) } }"
+            "kernelCalls.withLock { withContext(Dispatchers.Default) { k.dispatch(trait, entityId, event, payloadJson) } }"
         ));
         assert!(
             vm.contains("kernelCalls.withLock { k.applyServerResponse(raw, alreadyDelivered) }")
