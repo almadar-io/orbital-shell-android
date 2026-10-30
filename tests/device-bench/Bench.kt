@@ -75,7 +75,7 @@ fun runFrames(id: String, spec: JSONObject, sustained: Boolean): JSONObject {
             val start = nowMs()
             val result = Bridge.nativeFrame(handle, (i * step).toLong())
             val spent = nowMs() - start
-            if (i == 1 && result != null) fired = JSONObject(result).optJSONArray("fired")?.length() ?: 0
+            if (i == 1 && result != null) fired = JSONObject(result).optJSONObject("fired")?.let { byOrbital -> byOrbital.keys().asSequence().sumOf { byOrbital.getJSONArray(it).length() } } ?: 0
             kernelMs.add(spent)
             if (spent > FRAME_BUDGET_MS) dropped += 1
             if (sustained) {

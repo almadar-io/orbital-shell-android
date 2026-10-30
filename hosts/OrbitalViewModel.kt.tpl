@@ -169,7 +169,7 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
         val event = ((if (ok != null) declared["success"] else declared["failure"]) as? JsonPrimitive)?.contentOrNull ?: return
         val payload = (ok ?: mapOf("error" to JsonPrimitive(error), "kind" to JsonPrimitive(kind))).toMutableMap()
         (declared["key"] as? JsonPrimitive)?.contentOrNull?.let {{ payload["key"] = JsonPrimitive(it) }}
-        sendEvent(trait, event, JsonObject(payload), (declared["entity"] as? JsonPrimitive)?.contentOrNull)
+        sendEvent(trait, event, JsonObject(payload), (declared["entityId"] as? JsonPrimitive)?.contentOrNull)
     }}
 
     private fun applyResolvedTheme(theme: KernelResolvedTheme) {{

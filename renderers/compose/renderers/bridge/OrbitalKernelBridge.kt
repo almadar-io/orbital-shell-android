@@ -312,7 +312,7 @@ private data class KernelFrameDispatchWire(
 
 @Serializable
 private data class KernelFrameWire(
-    val fired: List<KernelFiredTick> = emptyList(),
+    val fired: Map<String, List<KernelFiredTick>> = emptyMap(),
     val response: KernelEventResponse,
     val dispatches: List<KernelFrameDispatchWire> = emptyList(),
     val droppedServerEffects: Int = 0,
@@ -326,7 +326,8 @@ data class KernelFrameDispatch(val trait: String, val result: KernelDispatchResu
 
 /** [OrbitalKernel.frame]'s merged tick response plus one dispatch per tick `emit`. */
 data class KernelFrameResult(
-    val fired: List<KernelFiredTick>,
+    /** The ticks that ran, under the orbital that declares each. */
+    val fired: Map<String, List<KernelFiredTick>>,
     val response: KernelEventResponse,
     val dispatches: List<KernelFrameDispatch>,
     /** Server effects a tick delegated: a tick has no server leg, so they are discarded. */
