@@ -106,6 +106,10 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
                 signOut()
             }}
             "auth/sign-in" -> viewModelScope.launch {{ answerSignIn(args, completion) }}
+            "auth/consent" -> {{
+                android.util.Log.e("Orbital", "host-ask auth/consent refused: this host has no Custom Tabs authorization flow")
+                returnHostAsk(completion, error = "auth/consent: this host has no Custom Tabs authorization flow", kind = "unavailable")
+            }}
             else -> {{
                 android.util.Log.e("Orbital", "host-ask $op refused: this host has no action for it")
                 returnHostAsk(completion, error = "$op: this host has no action for it", kind = "unavailable")

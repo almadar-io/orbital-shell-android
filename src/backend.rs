@@ -3832,6 +3832,17 @@ mod tests {
         assert!(ret.contains("sendEvent(trait, event, JsonObject(payload), (declared[\"entity\"] as? JsonPrimitive)?.contentOrNull)"));
     }
 
+    /// `auth/consent` is answered by name on Android: no Custom Tabs flow is wired, so it fails `unavailable` on its failure route.
+    #[test]
+    fn consent_is_a_host_ask_this_host_answers_unavailable_by_name() {
+        let vm = generate_view_model_file(&OirModule::new("TestApp", "1.0.0")).content;
+        let body = &vm[vm.find("fun answerHostAsk(").unwrap()..];
+        let consent = body.find("\"auth/consent\" -> {").expect("auth/consent has its own case");
+        let refuse = body.find("refused: this host has no action for it").unwrap();
+        assert!(consent < refuse);
+        assert!(body[consent..refuse].contains("returnHostAsk(completion, error = \"auth/consent: this host has no Custom Tabs authorization flow\", kind = \"unavailable\")"));
+    }
+
     #[test]
     fn an_undeclared_route_is_logged_not_thrown_by_the_single_navigation_sink() {
         let app = generate_app_file(&OirModule::new("TestApp", "1.0.0")).content;
