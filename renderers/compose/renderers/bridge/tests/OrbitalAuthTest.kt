@@ -8,14 +8,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -211,23 +207,6 @@ class OrbitalAuthTest {
     }
 
     @Test
-    fun viewer_normalizes_claims_like_the_web_client() {
-        val json = OrbitalAuth.viewerJson(jwt("""{"sub":"u1","name":"Maya","email":"m@x.io","role":"admin","user_id":"u1"}"""))
-        val user = Json.parseToJsonElement(requireNotNull(json)).jsonObject
-        assertEquals("u1", user["id"]?.jsonPrimitive?.content)
-        assertEquals("u1", user["uid"]?.jsonPrimitive?.content)
-        assertEquals("Maya", user["name"]?.jsonPrimitive?.content)
-        assertEquals("m@x.io", user["email"]?.jsonPrimitive?.content)
-        assertEquals("admin", user["role"]?.jsonPrimitive?.content)
-    }
-
-    @Test
-    fun viewer_is_null_without_a_subject_and_a_malformed_token_throws() {
-        assertNull(OrbitalAuth.viewerJson(jwt("""{"role":"admin"}""")))
-        assertThrows(OrbitalAuthException.Malformed::class.java) { OrbitalAuth.viewerJson("not-a-jwt") }
-    }
-
-    @Test
     fun config_needs_key_and_project_and_the_debug_override_wins() {
         assertEquals("env:9099", OrbitalAuthConfig.declared("k", "p", "manifest:9099", "env:9099")?.emulatorHost)
         assertEquals("manifest:9099", OrbitalAuthConfig.declared("k", "p", "manifest:9099", null)?.emulatorHost)
@@ -240,36 +219,21 @@ class OrbitalAuthTest {
         OrbitalAuthSession(token, "r", 2_000_000_000L, uid)
 
     @Test
-    fun a_session_attaches_its_token_and_binds_the_viewer_on_the_kernel() {
+    fun a_session_attaches_its_token_and_sign_out_clears_it() {
         val tokens = mutableListOf<String?>()
-        val users = mutableListOf<String>()
-        val binding = OrbitalSessionBinding({ tokens += it }, { users += it })
+        val binding = OrbitalSessionBinding({ tokens += it })
         val signedIn = session("u1")
 
         assertTrue(binding.apply(signedIn))
-
         assertEquals(listOf<String?>(signedIn.idToken), tokens)
-        val user = Json.parseToJsonElement(users.first()).jsonObject
-        assertEquals("u1", user["id"]?.jsonPrimitive?.content)
-        assertEquals("admin", user["role"]?.jsonPrimitive?.content)
-    }
-
-    @Test
-    fun sign_out_clears_the_token_and_the_kernel_viewer() {
-        val tokens = mutableListOf<String?>()
-        val users = mutableListOf<String>()
-        val binding = OrbitalSessionBinding({ tokens += it }, { users += it })
-        binding.apply(session("u1"))
 
         assertTrue(binding.apply(null))
-
         assertNull(tokens.last())
-        assertEquals("null", users.last())
     }
 
     @Test
     fun a_refresh_of_the_same_identity_is_not_an_identity_change() {
-        val binding = OrbitalSessionBinding({}, {})
+        val binding = OrbitalSessionBinding({})
         assertTrue(binding.apply(session("u1")))
         assertFalse(binding.apply(session("u1", jwt("""{"sub":"u1","iat":2}"""))))
         assertTrue(binding.apply(session("u2")))
@@ -277,6 +241,6 @@ class OrbitalAuthTest {
 
     @Test
     fun signing_out_when_nobody_is_signed_in_changes_nothing() {
-        assertFalse(OrbitalSessionBinding({}, {}).apply(null))
+        assertFalse(OrbitalSessionBinding({}).apply(null))
     }
 }

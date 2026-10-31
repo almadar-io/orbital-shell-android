@@ -95,9 +95,6 @@ object OrbitalKernelBridge {
     /** Report whether a trait's rendered output is on screen, so its `[visible]` ticks run only then. */
     external fun nativeSetTraitOnScreen(handle: Long, traitName: String, onScreen: Boolean)
 
-    /** Bind `@user` for every subsequent dispatch on this handle. */
-    external fun nativeSetCurrentUser(handle: Long, userJson: String)
-
     /** Seed `entityType` rows (a JSON array) into the handle's in-memory entity cache. */
     external fun nativeSeed(handle: Long, entityType: String, rowsJson: String)
 
@@ -520,10 +517,6 @@ class OrbitalKernel private constructor(private val handle: Long) {
 
     fun setTraitOnScreen(traitName: String, onScreen: Boolean) {
         OrbitalKernelBridge.nativeSetTraitOnScreen(handle, traitName, onScreen)
-    }
-
-    fun setCurrentUser(json: String) {
-        OrbitalKernelBridge.nativeSetCurrentUser(handle, json)
     }
 
     fun seed(entityType: String, rowsJson: String) {

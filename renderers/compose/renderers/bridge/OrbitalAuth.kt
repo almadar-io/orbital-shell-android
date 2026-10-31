@@ -205,36 +205,20 @@ class OrbitalAuth(
                 ?: throw OrbitalAuthException.Malformed("id token payload")
         }
 
-        /** `@user` for the kernel: `normalizeUserContext({...claims, uid: sub})`. `null` for a token with no subject. */
-        fun viewerJson(idToken: String): String? {
-            val claims = claimsOf(idToken)
-            val uid = claims["sub"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotEmpty() } ?: return null
-            val derived = setOf("id", "name", "displayName", "email")
-            val name = (claims["name"] ?: claims["displayName"])?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotEmpty() }
-            val email = claims["email"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotEmpty() }
-            val user = buildJsonObject {
-                put("id", uid)
-                put("uid", uid)
-                for ((key, value) in claims) if (key !in derived && key != "uid") put(key, value)
-                if (name != null) put("name", name)
-                if (email != null) put("email", email)
-            }
-            return user.toString()
-        }
     }
 }
 
 /**
- * Applies a session to the two places a signed-in viewer shows up: the `Authorization: Bearer`
- * plumbing every request reads, and the kernel's `@user`. It only reports whether the signed-in
- * identity changed; what an identity change repaints is the host's call, never inferred here.
+ * Applies a session to the `Authorization: Bearer` plumbing every request reads. The host passes the
+ * credential through as data and never names a viewer; the server verifies it and binds the identity
+ * (EXEC-IDENTITY-4). It only reports whether the signed-in identity changed; what an identity change
+ * repaints is the host's call, never inferred here.
  */
-class OrbitalSessionBinding(private val setToken: (String?) -> Unit, private val setViewer: (String) -> Unit) {
+class OrbitalSessionBinding(private val setToken: (String?) -> Unit) {
     private var uid: String? = null
 
     fun apply(session: OrbitalAuthSession?): Boolean {
         setToken(session?.idToken)
-        setViewer(session?.let { OrbitalAuth.viewerJson(it.idToken) } ?: "null")
         val changed = uid != session?.uid
         uid = session?.uid
         return changed

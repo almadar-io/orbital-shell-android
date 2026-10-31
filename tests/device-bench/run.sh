@@ -25,7 +25,6 @@ object OrbitalKernelBridge {
     external fun nativeDispatch(handle: Long, traitName: String, entityId: String?, event: String, payloadJson: String?): String?
     external fun nativeFrame(handle: Long, nowMs: Long): String?
     external fun nativeTickCount(handle: Long): Int
-    external fun nativeSetCurrentUser(handle: Long, userJson: String)
     external fun nativeOutstandingStrings(): Long
 }
 K

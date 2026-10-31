@@ -3399,7 +3399,7 @@ mod tests {
             "signed requests need the session first"
         );
         assert!(vm.contains("KeystoreSessionStore(application)"));
-        assert!(vm.contains("OrbitalSessionBinding({ api.authToken = it }, { json -> kernel?.setCurrentUser(json) })"));
+        assert!(vm.contains("OrbitalSessionBinding({ api.authToken = it })"));
         assert!(vm.contains(r#"const val HOST_SIGN_IN_ROUTE = "/login""#));
     }
 

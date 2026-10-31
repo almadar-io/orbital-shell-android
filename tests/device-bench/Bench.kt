@@ -6,7 +6,6 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 
-const val VIEWER = """{"id":"viewer-1","name":"Dev Viewer","email":"viewer@example.com","role":""}"""
 const val FRAME_BUDGET_MS = 1000.0 / 60.0
 const val SUSTAINED_SECONDS = 300.0
 
@@ -28,7 +27,6 @@ fun stats(samples: List<Double>): JSONObject = JSONObject()
 fun open(spec: JSONObject): Long {
     val handle = Bridge.nativeInit(spec.get("schema").toString(), "bench")
     check(handle != 0L) { "nativeInit returned 0" }
-    Bridge.nativeSetCurrentUser(handle, VIEWER)
     return handle
 }
 

@@ -88,7 +88,7 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
     )
     val session: StateFlow<OrbitalAuthSession?> = auth.session
     val apiBase: String get() = api.serverBase
-    private val sessionBinding = OrbitalSessionBinding({{ api.authToken = it }}, {{ json -> kernel?.setCurrentUser(json) }})
+    private val sessionBinding = OrbitalSessionBinding({{ api.authToken = it }})
     private var liveSubscription: LivePushSubscription? = null
 
     fun signOut() {{
@@ -358,9 +358,9 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
         liveSubscription = api.openLivePush {{ item -> onLivePushItem(item) }}
     }}
 
-    /** Binds the session's token and viewer. A different identity re-enters the app under it, as the
-     *  web re-renders under a new `UserProvider` viewer: the live-push channel reconnects signed and
-     *  every trait INITs again. A token refresh of the same identity changes neither. */
+    /** Binds the session's token; the server verifies it and binds the identity. A different identity re-enters
+     *  the app under it, as the web does: the live-push channel reconnects signed and every trait INITs again.
+     *  A token refresh of the same identity changes neither. */
     private fun applySession(next: OrbitalAuthSession?) {{
         val identityChanged = sessionBinding.apply(next)
         if (!identityChanged || !isReady) return
