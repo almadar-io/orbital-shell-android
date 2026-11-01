@@ -1,6 +1,8 @@
 package generated.patterns.core
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -109,40 +111,24 @@ object OrbitalKernelBridge {
     external fun nativeLastError(handle: Long): String
 }
 
-// MARK: - Wire models (mirror orbital-core's canonical EventResponse/EventRequest/
-// TraitSnapshot/DispatchMode JSON exactly — see kernel_c_api.rs's doc comment for
-// the envelope shape [OrbitalKernelBridge.nativeDispatch] returns). Named `Kernel*`
-// to stay distinct from this project's generated `EventResponse`/`EmittedEvent`
-// (package `generated`, the OLD per-shell wire §156 is converging away from).
+// MARK: - Wire models
+// The kernel's wire types are generated from orbital-core (`generated/KernelWire.kt`); this file names the
+// ones the host uses and keeps the host-side view of the frames it holds.
 
-@Serializable
-data class KernelEventSource(
-    val orbital: String? = null,
-    val trait: String? = null
-)
+typealias KernelEventSource = KernelBusEventSource
+typealias KernelServerLeg = KernelEventRequest
+typealias KernelSeed = KernelSeedWire
+typealias KernelDispatchResult = KernelDispatchWire
+typealias KernelFrameResult = KernelFrameWire
+typealias KernelAppliedResult = KernelAppliedWire
+typealias KernelTraitEventPair = KernelTupleStringString
 
-@Serializable
-data class KernelEmittedEvent(
-    val event: String,
-    val payload: JsonElement? = null,
-    val source: KernelEventSource? = null
-)
+val KernelTraitEventPair.trait: String get() = first
+val KernelTraitEventPair.event: String get() = second
 
-/**
- * Mirror of `orbital_core::FrameDelta` (EXEC-DIST-7): what a response changes in the frames its client holds, against the
- * kernel's view record. Each op is `["put", frame, {fields}]`, `["set", {frame: {fields}}]`, `["del", frame]` or
- * `["clear"]`. A delta without `session` is unversioned and applies wherever it lands.
- */
-@Serializable
-data class KernelFrameDelta(
-    val session: String? = null,
-    val from: Long,
-    val to: Long,
-    val ops: List<JsonArray>
-) {
-    /** A snapshot starts from nothing: `from` 0 and a leading `clear`. */
-    val isSnapshot: Boolean get() = from == 0L && ops.firstOrNull()?.firstOrNull()?.jsonPrimitive?.contentOrNull == "clear"
-}
+/** A snapshot starts from nothing: `from` 0 and a leading `clear`. */
+val KernelFrameDelta.isSnapshot: Boolean
+    get() = from == 0L && ((ops.firstOrNull() as? JsonArray)?.firstOrNull() as? JsonPrimitive)?.contentOrNull == "clear"
 
 enum class KernelFrameApply { APPLIED, STALE, GAP }
 
@@ -166,7 +152,7 @@ class KernelFrameView {
             session = deltaSession
             version = delta.to
         }
-        for (op in delta.ops) {
+        for (op in delta.ops.mapNotNull { it as? JsonArray }) {
             when (op.firstOrNull()?.jsonPrimitive?.contentOrNull) {
                 "clear" -> frames = emptyMap()
                 "del" -> op.getOrNull(1)?.jsonPrimitive?.contentOrNull?.let { frames = frames - it }
@@ -185,57 +171,6 @@ class KernelFrameView {
     }
 }
 
-/** Mirror of `orbital_core::EventResponse`. */
-@Serializable
-data class KernelEventResponse(
-    val success: Boolean,
-    val transitioned: Boolean,
-    val states: Map<String, String>,
-    val emittedEvents: List<KernelEmittedEvent>,
-    val data: Map<String, List<JsonElement>>? = null,
-    val frames: KernelFrameDelta? = null,
-    val clientEffectsByTrait: List<JsonElement>? = null,
-    val effectResults: List<JsonElement>? = null,
-    val guardFailed: String? = null,
-    val error: String? = null
-)
-
-@Serializable
-data class KernelTraitFrom(val trait: String, val from: String)
-
-/** Mirror of `orbital_core::EventRequest` — the "server leg" a dispatch produces. */
-@Serializable
-data class KernelServerLeg(
-    val event: String,
-    val eventId: String? = null,
-    val payload: JsonElement? = null,
-    val entityId: String? = null,
-    val targetTrait: String? = null,
-    val user: JsonElement? = null,
-    val clientId: String? = null,
-    val tick: String? = null,
-    val sourceTrait: String? = null,
-    val traits: List<KernelTraitFrom>? = null,
-    val entityByTrait: Map<String, JsonElement>? = null,
-    val behavior: String? = null,
-    val delivery: JsonElement? = null,
-    val dispatchLog: JsonElement? = null,
-    /** Not a dispatch: the client holds this version of the session's frames and asks what it misses. */
-    val framesSince: Long? = null
-)
-
-/** The `(trait, event)` that began a dispatch; a leg failure is reported against its event. */
-@Serializable
-data class KernelSeed(val trait: String, val event: String)
-
-/** A server leg and the orbital that owns the trait it is addressed to (the route it posts to). */
-@Serializable
-data class KernelRoutedLeg(val orbital: String, val leg: KernelServerLeg)
-
-/** Mirror of `orbital_core::runtime::TraitSnapshot`. */
-@Serializable
-data class KernelTraitSnapshot(val state: String, val entity: JsonElement)
-
 /** Mirror of `orbital_core::runtime::ResolvedTheme` (`key`/`base`/`mode`/`tokens`);
  * `mode` stays a raw `"light"|"dark"` string here (not [ColorMode]) so decoding
  * never fails on a value the mapping hasn't been extended for. */
@@ -247,90 +182,14 @@ data class KernelResolvedTheme(
     val tokens: ThemeTokensJson
 )
 
-/** Mirror of `orbital_core::runtime::DispatchMode`. */
-@Serializable
-enum class KernelDispatchMode {
-    persistedAwaited,
-    hybridClientOnly,
-    runtimeOptimistic
+/** Why a call into the kernel gave no usable answer: the kernel said so, or its answer is not the wire shape. */
+sealed class KernelWireException(message: String, cause: Throwable? = null) : Exception(message, cause) {
+    class Native(message: String) : KernelWireException(message)
+    class Decode(val type: String, cause: Throwable) : KernelWireException("the kernel's answer is not a $type: ${cause.message}", cause)
 }
-
-/** One `(trait, event)` pair, decoded from the `alreadyDelivered`/`applied` wire arrays. */
-data class KernelTraitEventPair(val trait: String, val event: String)
-
-private fun decodePairs(raw: List<List<String>>): List<KernelTraitEventPair> =
-    raw.filter { it.size == 2 }.map { KernelTraitEventPair(it[0], it[1]) }
-
-@Serializable
-private data class KernelDispatchWire(
-    val orbital: String,
-    val seed: KernelSeed,
-    val response: KernelEventResponse,
-    val serverLegs: List<KernelRoutedLeg> = emptyList(),
-    val mode: KernelDispatchMode,
-    val snapshot: KernelTraitSnapshot? = null,
-    val alreadyDelivered: List<List<String>> = emptyList(),
-    val awaiting: List<KernelAwaitingTrait>
-)
-
-data class KernelDispatchResult(
-    /** The orbital that owns the dispatched trait; the server leg posts to `/api/orbitals/<orbital>/events`. */
-    val orbital: String,
-    val seed: KernelSeed,
-    val response: KernelEventResponse,
-    val serverLegs: List<KernelRoutedLeg>,
-    val mode: KernelDispatchMode,
-    val snapshot: KernelTraitSnapshot?,
-    val alreadyDelivered: List<KernelTraitEventPair>,
-    /** The traits awaiting this dispatch's server legs (orbital-core `AwaitingTrait`). */
-    val awaiting: List<KernelAwaitingTrait>
-)
-
-/** A trait awaiting a server round trip, keyed by the transition its local run took. */
-@Serializable
-data class KernelAwaitingTrait(val trait: String, val event: String, val from: String)
-
-@Serializable
-data class KernelFiredTick(val trait: String, val tick: String)
-
-/** One cascade a tick's `emit` started: the dispatch envelope plus the emitting trait. */
-@Serializable
-private data class KernelFrameDispatchWire(
-    val trait: String,
-    val orbital: String,
-    val seed: KernelSeed,
-    val response: KernelEventResponse,
-    val serverLegs: List<KernelRoutedLeg> = emptyList(),
-    val mode: KernelDispatchMode,
-    val snapshot: KernelTraitSnapshot? = null,
-    val alreadyDelivered: List<List<String>> = emptyList(),
-    val awaiting: List<KernelAwaitingTrait>
-)
-
-@Serializable
-private data class KernelFrameWire(
-    val fired: Map<String, List<KernelFiredTick>> = emptyMap(),
-    val response: KernelEventResponse,
-    val dispatches: List<KernelFrameDispatchWire> = emptyList(),
-    val droppedServerEffects: Int = 0,
-    val errors: List<String> = emptyList()
-)
 
 @Serializable
 private data class KernelErrorWire(val error: String)
-
-data class KernelFrameDispatch(val trait: String, val result: KernelDispatchResult)
-
-/** [OrbitalKernel.frame]'s merged tick response plus one dispatch per tick `emit`. */
-data class KernelFrameResult(
-    /** The ticks that ran, under the orbital that declares each. */
-    val fired: Map<String, List<KernelFiredTick>>,
-    val response: KernelEventResponse,
-    val dispatches: List<KernelFrameDispatch>,
-    /** Server effects a tick delegated: a tick has no server leg, so they are discarded. */
-    val droppedServerEffects: Int,
-    val errors: List<String>
-)
 
 /** What one [OrbitalKernel.frame] call produced. */
 sealed class KernelFrameOutcome {
@@ -340,19 +199,7 @@ sealed class KernelFrameOutcome {
     data class Failed(val message: String) : KernelFrameOutcome()
 }
 
-@Serializable
-private data class KernelAppliedWire(val applied: List<List<String>> = emptyList(), val response: KernelEventResponse, val resync: KernelFramesResync? = null, val serverLegs: List<KernelRoutedLeg> = emptyList())
-
-/** The host numbered frames past the version this kernel holds: ask for `framesSince(since)`. */
-@Serializable
-data class KernelFramesResync(val session: String, val since: Long)
-
-/** [serverLegs]: the legs the fold itself owes the host (an own continuation such as a refetch after a persist's success), to post and fold in turn. */
-data class KernelAppliedResult(val applied: List<KernelTraitEventPair>, val response: KernelEventResponse, val resync: KernelFramesResync? = null, val serverLegs: List<KernelRoutedLeg> = emptyList())
-
-/** [OrbitalKernel.snapshot] result: every trait's current state plus the
- * resolved `@currentTheme` (null only when the native call itself failed —
- * an app with no declared theme still gets the `minimalist-light` default). */
+/** [OrbitalKernel.snapshot] result: every trait's current state plus the resolved `@currentTheme`. */
 data class KernelSnapshot(val states: Map<String, String>, val theme: KernelResolvedTheme?, val canvasTheme: JsonElement? = null, val motion: JsonElement? = null)
 
 private val kernelJson = Json { ignoreUnknownKeys = true }
@@ -386,80 +233,44 @@ class OrbitalKernel private constructor(private val handle: Long) {
         OrbitalKernelBridge.nativeDestroy(handle)
     }
 
-    fun dispatch(trait: String, entityId: String?, event: String, payloadJson: String?): KernelDispatchResult? {
-        val raw = OrbitalKernelBridge.nativeDispatch(handle, trait, entityId, event, payloadJson) ?: return null
-        val wire = runCatching { kernelJson.decodeFromString(KernelDispatchWire.serializer(), raw) }.getOrNull()
-            ?: return null
-        return KernelDispatchResult(
-            orbital = wire.orbital,
-            seed = wire.seed,
-            response = wire.response,
-            serverLegs = wire.serverLegs,
-            mode = wire.mode,
-            snapshot = wire.snapshot,
-            alreadyDelivered = decodePairs(wire.alreadyDelivered),
-            awaiting = wire.awaiting
-        )
-    }
+    private fun answer(raw: String?): String =
+        raw ?: throw KernelWireException.Native(lastError.ifEmpty { "the kernel gave no answer" })
 
-    fun applyServerResponse(responseJson: String, alreadyDelivered: List<KernelTraitEventPair>): KernelAppliedResult? {
-        val alreadyDeliveredJson: String =
-            kernelJson.encodeToString(alreadyDelivered.map { listOf(it.trait, it.event) })
-        val raw = OrbitalKernelBridge.nativeApplyServerResponse(handle, responseJson, alreadyDeliveredJson)
-            ?: return null
-        val wire = runCatching { kernelJson.decodeFromString(KernelAppliedWire.serializer(), raw) }.getOrNull()
-            ?: return null
-        return KernelAppliedResult(decodePairs(wire.applied), wire.response, wire.resync, wire.serverLegs)
+    private inline fun <reified T> decode(raw: String): T =
+        try {
+            kernelJson.decodeFromString<T>(raw)
+        } catch (failure: SerializationException) {
+            val native = runCatching { kernelJson.decodeFromString(KernelErrorWire.serializer(), raw).error }.getOrNull()
+            throw native?.let { KernelWireException.Native(it) } ?: KernelWireException.Decode(T::class.simpleName ?: "wire type", failure)
+        }
+
+    fun dispatch(trait: String, entityId: String?, event: String, payloadJson: String?): KernelDispatchResult =
+        decode(answer(OrbitalKernelBridge.nativeDispatch(handle, trait, entityId, event, payloadJson)))
+
+    fun applyServerResponse(responseJson: String, alreadyDelivered: List<KernelTraitEventPair>): KernelAppliedResult {
+        val alreadyDeliveredJson: String = kernelJson.encodeToString(alreadyDelivered)
+        return decode(answer(OrbitalKernelBridge.nativeApplyServerResponse(handle, responseJson, alreadyDeliveredJson)))
     }
 
     /** The delta a painter at version [since] of this kernel's frames needs: empty when current, else a snapshot. */
-    fun framesSince(since: Long): KernelFrameDelta? {
-        val raw = OrbitalKernelBridge.nativeFramesSince(handle, since) ?: return null
-        return runCatching { kernelJson.decodeFromString(KernelFrameDelta.serializer(), raw) }.getOrNull()
-    }
+    fun framesSince(since: Long): KernelFrameDelta = decode(answer(OrbitalKernelBridge.nativeFramesSince(handle, since)))
 
-    fun restore(trait: String, entityId: String?, snapshot: KernelTraitSnapshot): KernelEventResponse? {
+    fun restore(trait: String, entityId: String?, snapshot: KernelTraitSnapshot): KernelEventResponse {
         val snapshotJson = kernelJson.encodeToString(KernelTraitSnapshot.serializer(), snapshot)
-        val raw = OrbitalKernelBridge.nativeRestore(handle, trait, entityId, snapshotJson) ?: return null
-        return runCatching { kernelJson.decodeFromString(KernelEventResponse.serializer(), raw) }.getOrNull()
+        return decode(answer(OrbitalKernelBridge.nativeRestore(handle, trait, entityId, snapshotJson)))
     }
 
-    fun tick(trait: String, tickName: String, entityId: String?): KernelEventResponse? {
-        val raw = OrbitalKernelBridge.nativeTick(handle, trait, tickName, entityId) ?: return null
-        return runCatching { kernelJson.decodeFromString(KernelEventResponse.serializer(), raw) }.getOrNull()
-    }
+    fun tick(trait: String, tickName: String, entityId: String?): KernelEventResponse =
+        decode(answer(OrbitalKernelBridge.nativeTick(handle, trait, tickName, entityId)))
 
     /** Runs one host frame of the native tick clock (`nowMs` = the host's monotonic frame time). */
     fun frame(nowMs: Long): KernelFrameOutcome {
         val raw = OrbitalKernelBridge.nativeFrame(handle, nowMs) ?: return KernelFrameOutcome.Idle
-        val wire = runCatching { kernelJson.decodeFromString(KernelFrameWire.serializer(), raw) }.getOrNull()
-            ?: return KernelFrameOutcome.Failed(
-                runCatching { kernelJson.decodeFromString(KernelErrorWire.serializer(), raw).error }.getOrNull()
-                    ?: lastError.ifEmpty { "frame failed" }
-            )
-        return KernelFrameOutcome.Fired(
-            KernelFrameResult(
-                fired = wire.fired,
-                response = wire.response,
-                dispatches = wire.dispatches.map { d ->
-                    KernelFrameDispatch(
-                        trait = d.trait,
-                        result = KernelDispatchResult(
-                            orbital = d.orbital,
-                            seed = d.seed,
-                            response = d.response,
-                            serverLegs = d.serverLegs,
-                            mode = d.mode,
-                            snapshot = d.snapshot,
-                            alreadyDelivered = decodePairs(d.alreadyDelivered),
-                            awaiting = d.awaiting
-                        )
-                    )
-                },
-                droppedServerEffects = wire.droppedServerEffects,
-                errors = wire.errors
-            )
-        )
+        return try {
+            KernelFrameOutcome.Fired(decode<KernelFrameResult>(raw))
+        } catch (failure: KernelWireException) {
+            KernelFrameOutcome.Failed(failure.message ?: "frame failed")
+        }
     }
 
     /** Stops the native tick clock (app backgrounded); declared ticks and their phase are kept. */
@@ -480,31 +291,28 @@ class OrbitalKernel private constructor(private val handle: Long) {
         OrbitalKernelBridge.nativeGetState(handle, trait, entityId)?.ifEmpty { null }
 
     fun snapshot(): KernelSnapshot {
-        val raw = OrbitalKernelBridge.nativeSnapshot(handle) ?: return KernelSnapshot(emptyMap(), null)
         @Serializable
         data class Wire(val states: Map<String, String>, val theme: KernelResolvedTheme? = null, val canvasTheme: JsonElement? = null, val motion: JsonElement? = null)
-        val wire = runCatching { kernelJson.decodeFromString(Wire.serializer(), raw) }.getOrNull()
-            ?: return KernelSnapshot(emptyMap(), null)
+        val wire = decode<Wire>(answer(OrbitalKernelBridge.nativeSnapshot(handle)))
         return KernelSnapshot(wire.states, wire.theme, wire.canvasTheme, wire.motion)
     }
 
     /**
      * The rows a row-set reference (the `ref` of a `$rowSet` marker) resolves to now for the current viewer, in the
-     * reference's order (`orbital_kernel_resolve_rows`); `null` when the kernel cannot resolve it (read [lastError]).
+     * reference's order (`orbital_kernel_resolve_rows`).
      */
-    fun resolveRows(reference: JsonElement): JsonArray? {
-        val raw = OrbitalKernelBridge.nativeResolveRows(handle, kernelJson.encodeToString(JsonElement.serializer(), reference)) ?: return null
+    fun resolveRows(reference: JsonElement): JsonArray {
         @Serializable
-        data class Wire(val rows: List<JsonElement>, val total: Int = 0)
-        val wire = runCatching { kernelJson.decodeFromString(Wire.serializer(), raw) }.getOrNull() ?: return null
+        data class Wire(val rows: List<JsonElement>, val total: Long)
+        val wire = decode<Wire>(answer(OrbitalKernelBridge.nativeResolveRows(handle, kernelJson.encodeToString(JsonElement.serializer(), reference))))
         return JsonArray(wire.rows)
     }
 
-    /** [node] with every row-set marker replaced by the rows [resolveRows] answers; an unresolvable one becomes an empty list. */
+    /** [node] with every row-set marker replaced by the rows [resolveRows] answers; an unresolvable one throws its typed [KernelWireException] (never an empty list), so the caller fails that slot. */
     fun resolvingRowSets(node: JsonElement): JsonElement = when (node) {
         is JsonObject -> {
             val reference = node["\$rowSet"]?.let { it as? JsonPrimitive }?.booleanOrNull?.takeIf { it }?.let { node["ref"] }
-            if (reference != null) resolveRows(reference) ?: JsonArray(emptyList())
+            if (reference != null) resolveRows(reference)
             else JsonObject(node.mapValues { resolvingRowSets(it.value) })
         }
         is JsonArray -> JsonArray(node.map { resolvingRowSets(it) })

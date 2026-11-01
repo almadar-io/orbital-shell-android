@@ -9,14 +9,19 @@ import generated.patterns.core.KernelDispatchMode
 import generated.patterns.core.KernelDispatchResult
 import generated.patterns.core.KernelEventResponse
 import generated.patterns.core.KernelFrameOutcome
+import generated.patterns.core.KernelAppliedResult
 import generated.patterns.core.KernelFrameResult
+import generated.patterns.core.KernelWireException
 import generated.patterns.core.KernelFrameApply
 import generated.patterns.core.KernelFrameView
 import generated.patterns.core.KernelFramesResync
 import generated.patterns.core.KernelResolvedTheme
+import generated.patterns.core.KernelRoutedLeg
 import generated.patterns.core.KernelServerLeg
 import generated.patterns.core.KernelTraitEventPair
 import generated.patterns.core.KernelTraitSnapshot
+import generated.patterns.core.event
+import generated.patterns.core.trait
 import generated.patterns.core.KeystoreSessionStore
 import generated.patterns.core.OkHttpAuthTransport
 import generated.patterns.core.OrbitalAuth
@@ -87,7 +92,6 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope,
     )
     val session: StateFlow<OrbitalAuthSession?> = auth.session
-    val apiBase: String get() = api.serverBase
     private val sessionBinding = OrbitalSessionBinding({{ api.authToken = it }})
     private var liveSubscription: LivePushSubscription? = null
 
@@ -191,7 +195,12 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
     fun toggleThemeMode() {{
         val live = kernel ?: return
         live.setThemeMode(if (themeMode == ColorMode.Dark) "light" else "dark")
-        val snap = live.snapshot()
+        val snap = try {{
+            live.snapshot()
+        }} catch (failure: KernelWireException) {{
+            android.util.Log.e("Orbital", "kernel snapshot failed: ${{failure.message}}")
+            return
+        }}
         snap.theme?.let {{ applyResolvedTheme(it) }}
         canvasTheme = snap.canvasTheme
         motion = snap.motion
@@ -237,11 +246,17 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
     /**
      * `content` with every row-set marker replaced by the rows the kernel's one resolver answers now, re-checked for
      * the signed-in viewer (EXEC-RENDER-3). The paint generation is a source of the flows below, so a rows-changed
-     * repaint (which re-applies an equal render) re-resolves too.
+     * repaint (which re-applies an equal render) re-resolves too. A reference the kernel cannot resolve paints that slot
+     * as an `error-state` node carrying the typed failure.
      */
     private suspend fun paintedRowSets(content: Map<String, JsonElement>): Map<String, JsonElement> {{
         val k = kernel ?: return content
-        return withContext(Dispatchers.Default) {{ content.mapValues {{ k.resolvingRowSets(it.value) }} }}
+        return withContext(Dispatchers.Default) {{
+            content.mapValues {{
+                try {{ k.resolvingRowSets(it.value) }}
+                catch (e: KernelWireException) {{ errorStateNode(e.message ?: e.toString()) }}
+            }}
+        }}
     }}
 
     /** `uiSlots`, with a `skeleton` node in an awaiting slot that is still empty. */
@@ -326,7 +341,12 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
                 return@launch
             }}
             kernel = created
-            val snap = created.snapshot()
+            val snap = try {{
+                created.snapshot()
+            }} catch (failure: KernelWireException) {{
+                android.util.Log.e("Orbital", "kernel snapshot failed: ${{failure.message}}")
+                return@launch
+            }}
             withContext(Dispatchers.Main) {{
                 if (snap.states.isNotEmpty()) {{
                     _states.value = _states.value + snap.states
@@ -407,9 +427,10 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {{
             val k = kernel ?: return@launch
             val payloadJson = item.payload?.let {{ kernelJson.encodeToString(JsonElement.serializer(), it) }}
-            val result = kernelCalls.withLock {{ withContext(Dispatchers.Default) {{ k.dispatch(trait, null, item.event, payloadJson) }} }}
-            if (result == null) {{
-                android.util.Log.e("Orbital", "live-push dispatch failed: trait=$trait event=${{item.event}} error=${{k.lastError}}")
+            val result = try {{
+                kernelCalls.withLock {{ withContext(Dispatchers.Default) {{ k.dispatch(trait, null, item.event, payloadJson) }} }}
+            }} catch (failure: KernelWireException) {{
+                android.util.Log.e("Orbital", "live-push dispatch failed: trait=$trait event=${{item.event}} error=${{failure.message}}")
                 return@launch
             }}
             android.util.Log.i(
@@ -493,9 +514,10 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
                 return@launch
             }}
             val payloadJson = payload?.let {{ kernelJson.encodeToString(JsonElement.serializer(), it) }}
-            val result = kernelCalls.withLock {{ withContext(Dispatchers.Default) {{ k.dispatch(trait, entityId, event, payloadJson) }} }}
-            if (result == null) {{
-                val err = k.lastError
+            val result = try {{
+                kernelCalls.withLock {{ withContext(Dispatchers.Default) {{ k.dispatch(trait, entityId, event, payloadJson) }} }}
+            }} catch (failure: KernelWireException) {{
+                val err = failure.message
                 android.util.Log.e("Orbital", "dispatch failed: trait=$trait event=$event error=$err")
                 _notifications.emit("Event failed ($trait/$event): $err")
                 return@launch
@@ -596,6 +618,9 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
     private fun skeletonNode(render: AwaitRender): JsonElement =
         JsonObject(mapOf("type" to JsonPrimitive("skeleton"), "spec" to render.skeleton))
 
+    private fun errorStateNode(message: String): JsonElement =
+        JsonObject(mapOf("type" to JsonPrimitive("error-state"), "message" to JsonPrimitive(message)))
+
     /** Stops the tick clock (app left the foreground); ticks and their phase are kept. */
     fun framePause() {{
         kernel?.framePause()
@@ -622,7 +647,7 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
     /** The tick response folds like a dispatch response; each tick `emit` cascade folds (and posts its server leg) like a tapped event on the emitting trait. */
     private suspend fun foldFrame(frame: KernelFrameResult) {{
         foldResponse(frame.response)
-        frame.dispatches.forEach {{ foldDispatch(it.trait, it.result) }}
+        frame.dispatches.forEach {{ foldDispatch(it.trait, it.dispatch) }}
         frame.errors.forEach {{ android.util.Log.e("Orbital", "tick failed: $it") }}
         if (frame.droppedServerEffects > 0 && !loggedDroppedServerEffects) {{
             loggedDroppedServerEffects = true
@@ -645,15 +670,18 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
         response.data?.let {{ data -> _entityData.value = _entityData.value + data }}
         response.frames?.let {{ delta ->
             if (frameView.apply(delta) == KernelFrameApply.GAP) {{
-                kernel?.framesSince(frameView.version)?.let {{ frameView.apply(it) }}
+                kernel?.let {{ k ->
+                    try {{
+                        frameView.apply(k.framesSince(frameView.version))
+                    }} catch (failure: KernelWireException) {{
+                        _notifications.emit(failure.message ?: "frames resync failed")
+                    }}
+                }}
             }}
             _fields.value = frameView.frames
         }}
         response.clientEffectsByTrait.orEmpty().forEach {{ entry ->
-            val obj = entry as? JsonObject ?: return@forEach
-            val trait = obj["traitName"]?.jsonPrimitive?.contentOrNull ?: return@forEach
-            val effect = obj["effect"] ?: return@forEach
-            effectHandlers.apply(effect, trait)
+            effectHandlers.apply(entry.effect, entry.traitName)
         }}
         if (!response.success) {{
             _notifications.emit(response.error ?: response.guardFailed ?: "Event failed")
@@ -684,9 +712,12 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
         val k = kernel ?: return
         suspend fun restore(error: String) {{
             if (snapshot != null) {{
-                val repaint = kernelCalls.withLock {{ k.restore(requestTrait, null, snapshot) }}
                 _states.value = _states.value + (requestTrait to snapshot.state)
-                if (repaint != null) foldResponse(repaint)
+                try {{
+                    foldResponse(kernelCalls.withLock {{ k.restore(requestTrait, null, snapshot) }})
+                }} catch (failure: KernelWireException) {{
+                    android.util.Log.e("Orbital", "restore of $requestTrait failed: ${{failure.message}}")
+                }}
             }}
         }}
         api.postServerLeg(orbital, leg)
@@ -696,9 +727,14 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
                 if (decoded != null && decoded.success) {{
                     // `KernelAppliedResult.applied` reuses the (trait, event) pair
                     // shape for (trait, newState) — see kernel_c_api.rs's `AppliedWire`.
-                    val applied = kernelCalls.withLock {{ k.applyServerResponse(raw, alreadyDelivered) }}
+                    val appliedResult = try {{
+                        Result.success(kernelCalls.withLock {{ k.applyServerResponse(raw, alreadyDelivered) }})
+                    }} catch (failure: KernelWireException) {{
+                        Result.failure<KernelAppliedResult>(failure)
+                    }}
+                    val applied = appliedResult.getOrNull()
                     if (applied == null) {{
-                        val reason = k.lastError
+                        val reason = appliedResult.exceptionOrNull()?.message ?: "applyServerResponse failed"
                         restore(reason)
                         android.util.Log.e("Orbital", "applyServerResponse failed: trait=$requestTrait event=${{leg.event}} error=$reason")
                         _notifications.emit("Event failed ($requestTrait/${{leg.event}}): $reason")
@@ -736,9 +772,14 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
                     if (decoded == null || !decoded.success) {{
                         decoded?.error ?: decoded?.guardFailed ?: "malformed server response"
                     }} else {{
-                        val applied = kernelCalls.withLock {{ k.applyServerResponse(raw, emptyList()) }}
+                        val appliedResult = try {{
+                            Result.success(kernelCalls.withLock {{ k.applyServerResponse(raw, emptyList()) }})
+                        }} catch (failure: KernelWireException) {{
+                            Result.failure<KernelAppliedResult>(failure)
+                        }}
+                        val applied = appliedResult.getOrNull()
                         if (applied == null) {{
-                            k.lastError
+                            appliedResult.exceptionOrNull()?.message ?: "applyServerResponse failed"
                         }} else {{
                             applied.applied.forEach {{ pair -> _states.value = _states.value + (pair.trait to pair.event) }}
                             foldResponse(applied.response)
@@ -763,8 +804,11 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
         val k = kernel ?: return
         val ask = KernelServerLeg(event = "\$FRAMES", targetTrait = requestTrait, clientId = clientId, framesSince = resync.since)
         api.postServerLeg(orbital, ask).onSuccess {{ raw ->
-            val applied = kernelCalls.withLock {{ k.applyServerResponse(raw, emptyList()) }}
-            if (applied != null) foldResponse(applied.response)
+            try {{
+                foldResponse(kernelCalls.withLock {{ k.applyServerResponse(raw, emptyList()) }}.response)
+            }} catch (failure: KernelWireException) {{
+                _notifications.emit(failure.message ?: "frames resync failed")
+            }}
         }}
     }}
 

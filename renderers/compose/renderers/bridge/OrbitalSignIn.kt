@@ -14,7 +14,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -53,7 +52,6 @@ object SignInIds {
     const val SIGN_OUT = "action-signin-signout"
     const val ERROR = "signin-error"
     const val STATUS = "signin-status"
-    fun persona(id: String): String = "action-signin-persona-$id"
 }
 
 /** The provider calls go through OkHttp; the body is returned undecoded so [OrbitalAuth] owns every parse. */
@@ -138,12 +136,9 @@ fun OrbitalSignInScreen(viewModel: OrbitalViewModel) {
     val session by auth.session.collectAsState()
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
-    var personas by remember { mutableStateOf(emptyList<OrbitalPersona>()) }
     var failure by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-
-    LaunchedEffect(Unit) { personas = auth.personas(viewModel.apiBase) }
 
     fun run(signIn: suspend () -> Unit) {
         failure = null
@@ -196,16 +191,6 @@ fun OrbitalSignInScreen(viewModel: OrbitalViewModel) {
                     enabled = !busy,
                     modifier = Modifier.testTag(SignInIds.SUBMIT),
                 ) { Text(if (busy) "Signing in..." else "Sign in") }
-                if (personas.isNotEmpty()) {
-                    Text("Dev personas", color = theme.mutedForeground)
-                    personas.forEach { persona ->
-                        OutlinedButton(
-                            onClick = { run { auth.signInAsPersona(persona.id, viewModel.apiBase) } },
-                            enabled = !busy,
-                            modifier = Modifier.testTag(SignInIds.persona(persona.id)),
-                        ) { Text(persona.label) }
-                    }
-                }
             }
         }
         failure?.let { Text(it, color = theme.error, modifier = Modifier.testTag(SignInIds.ERROR)) }

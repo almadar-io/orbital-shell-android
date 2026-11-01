@@ -98,41 +98,14 @@ class OrbitalAuthTest {
     }
 
     @Test
-    fun persona_sign_in_exchanges_the_server_custom_token() = runBlocking {
-        val transport = FakeTransport().apply {
-            replies += AuthReply(200, """{"success":true,"customToken":"ct","authEmulatorHost":"127.0.0.1:9099","projectId":"demo-app"}""")
-            replies += signInReply(jwt("""{"sub":"p-1","role":"admin"}"""))
-        }
+    fun custom_token_sign_in_adopts_the_session() = runBlocking {
+        val transport = FakeTransport().apply { replies += signInReply(jwt("""{"sub":"p-1","role":"admin"}""")) }
         val sut = auth(emulator, transport)
 
-        sut.signInAsPersona("p-1", "http://127.0.0.1:3030")
+        sut.signInWithCustomToken("ct")
 
-        assertEquals("http://127.0.0.1:3030/api/personas/sign-in", transport.requests[0].second)
-        assertTrue(transport.requests[1].second.contains("accounts:signInWithCustomToken"))
+        assertTrue(transport.requests[0].second.contains("accounts:signInWithCustomToken"))
         assertEquals("p-1", sut.session.value?.uid)
-    }
-
-    @Test
-    fun persona_sign_in_failure_surfaces_the_server_error_and_signs_nobody_in() = runBlocking {
-        val transport = FakeTransport().apply { replies += AuthReply(404, """{"success":false,"error":"no persona with id x"}""") }
-        val sut = auth(emulator, transport)
-
-        val failure = runCatching { sut.signInAsPersona("x", "http://127.0.0.1:3030") }.exceptionOrNull()
-
-        assertEquals("no persona with id x", failure?.message)
-        assertNull(sut.session.value)
-        assertEquals(1, transport.requests.size)
-    }
-
-    @Test
-    fun personas_lists_the_roster_and_is_empty_when_the_server_offers_none() = runBlocking {
-        val transport = FakeTransport().apply {
-            replies += AuthReply(200, """{"success":true,"personas":[{"id":"p-1","name":"Maya","role":"admin"},{"id":"p-2"}]}""")
-            replies += AuthReply(404, "{}")
-        }
-        val sut = auth(emulator, transport)
-        assertEquals(listOf(OrbitalPersona("p-1", "Maya - admin"), OrbitalPersona("p-2", "p-2 - no role")), sut.personas("http://h"))
-        assertEquals(emptyList<OrbitalPersona>(), sut.personas("http://h"))
     }
 
     @Test

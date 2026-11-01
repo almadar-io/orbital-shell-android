@@ -43,8 +43,6 @@ data class OrbitalAuthConfig(val apiKey: String, val projectId: String, val emul
 @Serializable
 data class OrbitalAuthSession(val idToken: String, val refreshToken: String, val expiresAtMs: Long, val uid: String)
 
-data class OrbitalPersona(val id: String, val label: String)
-
 sealed class OrbitalAuthException(message: String) : Exception(message) {
     object NotConfigured : OrbitalAuthException("Sign-in is not configured for this build")
     class Provider(message: String) : OrbitalAuthException(message)
@@ -104,31 +102,6 @@ class OrbitalAuth(
         val body = buildJsonObject { put("token", customToken); put("returnSecureToken", true) }
         val reply = post("${cfg.identityToolkitBase}/accounts:signInWithCustomToken?key=${cfg.apiKey}", body)
         adopt(sessionFromSignIn(reply), persist = true)
-    }
-
-    /** The dev persona roster a server's `personasRouter` offers (only while it runs on the Auth emulator). */
-    suspend fun personas(apiBase: String): List<OrbitalPersona> {
-        val reply = runCatching { transport.send("GET", "$apiBase/api/personas", null) }.getOrNull() ?: return emptyList()
-        if (reply.status !in 200..299) return emptyList()
-        val rows = runCatching { json.parseToJsonElement(reply.body).jsonObject["personas"] as? JsonArray }.getOrNull() ?: return emptyList()
-        return rows.mapNotNull { row ->
-            val obj = row as? JsonObject ?: return@mapNotNull null
-            val id = obj["id"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
-            val name = obj["name"]?.jsonPrimitive?.contentOrNull ?: id
-            val role = obj["role"]?.jsonPrimitive?.contentOrNull ?: "no role"
-            OrbitalPersona(id, "$name - $role")
-        }
-    }
-
-    suspend fun signInAsPersona(id: String, apiBase: String) {
-        val reply = transport.send("POST", "$apiBase/api/personas/sign-in", buildJsonObject { put("id", id) }.toString())
-        val parsed = runCatching { json.parseToJsonElement(reply.body).jsonObject }.getOrNull()
-            ?: throw OrbitalAuthException.Malformed("persona sign-in body (${reply.status})")
-        val customToken = parsed["customToken"]?.jsonPrimitive?.contentOrNull
-        if (reply.status !in 200..299 || customToken == null) {
-            throw OrbitalAuthException.Provider(parsed["error"]?.jsonPrimitive?.contentOrNull ?: "persona sign-in failed (${reply.status})")
-        }
-        signInWithCustomToken(customToken)
     }
 
     /** Refreshes the ID token when [marginMs] or less remains. */

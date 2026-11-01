@@ -1832,6 +1832,14 @@ mod tests {
         let bridge = include_str!("../renderers/compose/renderers/bridge/OrbitalKernelBridge.kt");
         assert!(bridge.contains("external fun nativeResolveRows(handle: Long, refJson: String): String?"));
         assert!(bridge.contains("fun resolvingRowSets(node: JsonElement): JsonElement"));
+        assert!(
+            vm.contains("catch (e: KernelWireException) { errorStateNode(e.message ?: e.toString()) }"),
+            "a failed resolve paints the slot as an error-state, never an empty list"
+        );
+        assert!(
+            vm.contains(r#"JsonObject(mapOf("type" to JsonPrimitive("error-state"), "message" to JsonPrimitive(message)))"#)
+        );
+        assert!(!bridge.contains("getOrDefault(JsonArray(emptyList()))"), "control: no failure becomes an empty list");
     }
 
     #[test]
@@ -2275,7 +2283,8 @@ mod tests {
         let module = OirModule::new("TestApp", "1.0.0");
         let content = generate_view_model_file(&module).content;
         assert!(content.contains("private var kernel: OrbitalKernel? = null"));
-        assert!(content.contains("val result = kernelCalls.withLock { withContext(Dispatchers.Default) { k.dispatch(trait, entityId, event, payloadJson) } }"));
+        assert!(content.contains("kernelCalls.withLock { withContext(Dispatchers.Default) { k.dispatch(trait, entityId, event, payloadJson) } }"));
+        assert!(content.contains("} catch (failure: KernelWireException) {"), "a dispatch the kernel answers badly fails typed");
         assert!(content.contains("KernelDispatchMode.hybridClientOnly ->"));
         assert!(content.contains("KernelDispatchMode.runtimeOptimistic ->"));
         assert!(content.contains("KernelDispatchMode.persistedAwaited ->"));
@@ -2369,9 +2378,9 @@ mod tests {
             "kernelCalls.withLock { withContext(Dispatchers.Default) { k.dispatch(trait, entityId, event, payloadJson) } }"
         ));
         assert!(
-            vm.contains("kernelCalls.withLock { k.applyServerResponse(raw, alreadyDelivered) }")
+            vm.contains("Result.success(kernelCalls.withLock { k.applyServerResponse(raw, alreadyDelivered) })")
         );
-        assert!(vm.contains("kernelCalls.withLock { k.restore(requestTrait, null, snapshot) }"));
+        assert!(vm.contains("foldResponse(kernelCalls.withLock { k.restore(requestTrait, null, snapshot) })"));
         // Control: the unlocked dispatch spelling is gone.
         assert!(!vm.contains("val result = withContext(Dispatchers.Default) { k.dispatch("));
         assert!(!vm.contains("= k.applyServerResponse("));
@@ -2441,7 +2450,8 @@ mod tests {
         // Control: no baked orbital constant survives.
         assert!(!vm.contains("ORBITAL_NAME"));
         let bridge = include_str!("../renderers/compose/renderers/bridge/OrbitalKernelBridge.kt");
-        assert!(bridge.contains("orbital = wire.orbital,"));
+        assert!(bridge.contains("typealias KernelDispatchResult = KernelDispatchWire"));
+        assert!(!bridge.contains("orbital = wire.orbital,"), "control: the bridge no longer copies the wire field by field");
     }
 
     /// `initAllTraits` must fire `INIT` for every `TRAITS_WITH_INIT` member once,
@@ -2484,9 +2494,8 @@ mod tests {
         let content = generate_view_model_file(&module).content;
         assert!(content.contains("private val effectHandlers = EffectHandlers("));
         assert!(content.contains("response.clientEffectsByTrait.orEmpty().forEach { entry ->"));
-        assert!(content.contains("val trait = obj[\"traitName\"]?.jsonPrimitive?.contentOrNull ?: return@forEach"));
-        assert!(content.contains("val effect = obj[\"effect\"] ?: return@forEach"));
-        assert!(content.contains("effectHandlers.apply(effect, trait)"));
+        assert!(content.contains("effectHandlers.apply(entry.effect, entry.traitName)"));
+        assert!(!content.contains("obj[\"traitName\"]"), "control: the entry is read through its generated model, not by key");
         // The "emit" client effect still routes through onEmit == sendEvent
         // (CLIENT_EFFECT_KINDS coverage; the kernel never actually produces it).
         assert!(content.contains("trait, event, payload -> sendEvent(trait, event, payload)"));
@@ -2564,7 +2573,7 @@ mod tests {
             "var themeTokens: ThemeTokensJson by mutableStateOf(ThemeTokensJson.fallback)"
         ));
         assert!(content.contains("var themeMode: ColorMode by mutableStateOf(ColorMode.Light)"));
-        assert!(content.contains("val snap = created.snapshot()"));
+        assert!(content.contains("created.snapshot()"));
         assert!(content.contains("snap.theme?.let { applyResolvedTheme(it) }"));
         assert!(content.contains("themeTokens = theme.tokens"));
         assert!(content.contains(
@@ -3650,7 +3659,7 @@ mod tests {
         assert!(owed.contains("queue.removeFirst()"));
         assert!(!owed.contains("restore("));
         let bridge = include_str!("../renderers/compose/renderers/bridge/OrbitalKernelBridge.kt");
-        assert!(bridge.contains("wire.resync, wire.serverLegs)"));
+        assert!(bridge.contains("typealias KernelAppliedResult = KernelAppliedWire"));
     }
 
     #[test]
@@ -3665,10 +3674,10 @@ mod tests {
         ));
         assert!(body.contains("restore(message)"));
         assert!(
-            body.contains("val applied = kernelCalls.withLock { k.applyServerResponse(raw, alreadyDelivered) }\n"),
-            "an apply that returns null must be handled:\n{body}"
+            body.contains("Result.success(kernelCalls.withLock { k.applyServerResponse(raw, alreadyDelivered) })"),
+            "an apply the kernel refuses must be handled:\n{body}"
         );
-        assert!(body.contains("val reason = k.lastError\n                        restore(reason)"));
+        assert!(body.contains("restore(reason)"));
     }
 
     #[test]
@@ -3678,12 +3687,12 @@ mod tests {
         assert!(vm.contains("foldResponse(result.response)"));
         assert!(vm.contains("foldResponse(applied.response)"));
         assert_eq!(vm.matches("private suspend fun foldResponse(").count(), 1);
-        assert_eq!(vm.matches("effectHandlers.apply(effect,").count(), 1);
+        assert_eq!(vm.matches("effectHandlers.apply(entry.effect,").count(), 1);
         let rejected = vm.find("val message = decoded?.error").unwrap();
         let branch_end = rejected + vm[rejected..].find("private suspend fun").unwrap();
         assert!(!vm[rejected..branch_end].contains("foldResponse(applied.response)"));
         let resync = vm.find("private suspend fun resyncFrames(").unwrap();
-        assert!(vm[resync..].contains("foldResponse(applied.response)"), "control: the resync fold applies the snapshot");
+        assert!(vm[resync..].contains("k.applyServerResponse(raw, emptyList()) }.response)"), "control: the resync fold applies the snapshot");
     }
 
     #[test]
@@ -3829,7 +3838,7 @@ mod tests {
         let ret = &vm[vm.find("private fun returnHostAsk(").unwrap()..];
         assert!(ret.contains("else declared[\"failure\"]) as? JsonPrimitive)?.contentOrNull ?: return"), "an undeclared route fires nothing");
         assert!(ret.contains("payload[\"key\"] = JsonPrimitive(it)"));
-        assert!(ret.contains("sendEvent(trait, event, JsonObject(payload), (declared[\"entity\"] as? JsonPrimitive)?.contentOrNull)"));
+        assert!(ret.contains("sendEvent(trait, event, JsonObject(payload), (declared[\"entityId\"] as? JsonPrimitive)?.contentOrNull)"));
     }
 
     /// `auth/consent` is answered by name on Android: no Custom Tabs flow is wired, so it fails `unavailable` on its failure route.
@@ -4000,7 +4009,7 @@ mod tests {
         assert!(
             body.contains("foldResponse(frame.response)")
         );
-        assert!(body.contains("foldDispatch(it.trait, it.result)"));
+        assert!(body.contains("foldDispatch(it.trait, it.dispatch)"));
         assert_eq!(
             vm.matches("private suspend fun foldDispatch(").count(),
             1,

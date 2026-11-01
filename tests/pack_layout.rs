@@ -8,7 +8,8 @@ use orbital_core_base::ir::OirModule;
 use orbital_shell_android::AndroidBackend;
 
 const PLATFORM_EXTENSIONS: [&str; 4] = ["swift", "kt", "h", "modulemap"];
-const BRIDGE_FILES: [&str; 5] = [
+const BRIDGE_FILES: [&str; 6] = [
+    "generated/KernelWire.kt",
     "OrbitalAuth.kt",
     "OrbitalGameBridge.kt",
     "OrbitalGameCanvas.kt",
