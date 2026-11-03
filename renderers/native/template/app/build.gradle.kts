@@ -8,7 +8,7 @@ android {
 
     defaultConfig {
         applicationId = "{{APP_PACKAGE}}"
-        minSdk = 26
+        minSdk = {{NATIVE_GPU_MIN_API}}
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"

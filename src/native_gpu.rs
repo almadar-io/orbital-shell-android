@@ -7,10 +7,21 @@ use sha2::{Digest, Sha256};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-const CONTRACT_VERSION: u32 = 1;
-const ABI: &str = "arm64-v8a";
-const FEATURE_SET: &str = "native-a11y";
-const LIBRARY: &str = "liborbital_client_dioxus.so";
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct NativeGpuContract {
+    contract_version: u32,
+    abi: String,
+    library: String,
+    min_api: u32,
+    production_feature_set: String,
+    research_feature_set: String,
+}
+
+fn native_gpu_contract() -> NativeGpuContract {
+    serde_json::from_str(include_str!("../renderers/native/contract.json"))
+        .expect("the bundled native GPU contract must be valid")
+}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -25,14 +36,26 @@ struct NativeGpuManifest {
 pub struct NativeGpuShell {
     template: PathBuf,
     bundle: PathBuf,
+    research: bool,
 }
 
 impl NativeGpuShell {
     pub fn new() -> Result<Self, ShellError> {
+        let research = match std::env::var("ORBITAL_NATIVE_GPU_RESEARCH") {
+            Ok(value) if value == "1" => true,
+            Ok(_) => {
+                return Err(ShellError::Template(
+                    "ORBITAL_NATIVE_GPU_RESEARCH must be 1 when set".into(),
+                ))
+            }
+            Err(std::env::VarError::NotPresent) => false,
+            Err(error) => return Err(ShellError::Template(error.to_string())),
+        };
         if let Some(bundle) = std::env::var_os("ORBITAL_NATIVE_GPU_LIB_DIR") {
             return Ok(Self {
                 template: Path::new(env!("CARGO_MANIFEST_DIR")).join("renderers/native/template"),
                 bundle: PathBuf::from(bundle),
+                research,
             });
         }
         let executable = std::env::current_exe()?;
@@ -42,33 +65,45 @@ impl NativeGpuShell {
                 executable.display()
             ))
         })?;
-        Ok(Self::from_package_root(package))
+        let mut shell = Self::from_package_root(package);
+        shell.research = research;
+        Ok(shell)
     }
 
     fn from_package_root(package: &Path) -> Self {
         Self {
             template: package.join("templates/android-native-gpu"),
             bundle: package.join("native-gpu/android"),
+            research: false,
         }
     }
 
     fn verified_library(&self) -> Result<PathBuf, ShellError> {
+        let contract = native_gpu_contract();
+        let feature_set = if self.research {
+            &contract.research_feature_set
+        } else {
+            &contract.production_feature_set
+        };
         let manifest_path = self.bundle.join("manifest.json");
         let manifest: NativeGpuManifest =
             serde_json::from_slice(&std::fs::read(&manifest_path)?)
                 .map_err(|e| ShellError::Template(format!("{}: {e}", manifest_path.display())))?;
-        if manifest.contract_version != CONTRACT_VERSION
-            || manifest.abi != ABI
+        if manifest.contract_version != contract.contract_version
+            || manifest.abi != contract.abi
             || manifest.shell_version != env!("CARGO_PKG_VERSION")
-            || manifest.feature_set != FEATURE_SET
+            || manifest.feature_set != feature_set.as_str()
         {
             return Err(ShellError::Template(format!(
-                "{}: expected native GPU contract {CONTRACT_VERSION}, ABI {ABI}, shell {}, feature set {FEATURE_SET}",
+                "{}: expected native GPU contract {}, ABI {}, shell {}, feature set {}",
                 manifest_path.display(),
-                env!("CARGO_PKG_VERSION")
+                contract.contract_version,
+                contract.abi,
+                env!("CARGO_PKG_VERSION"),
+                feature_set
             )));
         }
-        let library = self.bundle.join(ABI).join(LIBRARY);
+        let library = self.bundle.join(&contract.abi).join(&contract.library);
         let mut file = std::fs::File::open(&library)?;
         let mut elf = [0u8; 20];
         file.read_exact(&mut elf)?;
@@ -167,18 +202,20 @@ impl Shell for NativeGpuShell {
 
     fn init_project(&self, output: &Path, project_name: &str) -> Result<(), ShellError> {
         let library = self.verified_library()?;
+        let contract = native_gpu_contract();
         self.copy_template(output)?;
         let package = format!("io.almadar.{}", crate::shell::to_package_name(project_name));
         let replacements = std::collections::HashMap::from([
             ("{{APP_PACKAGE}}", package),
             ("{{APP_TITLE}}", project_name.to_string()),
+            ("{{NATIVE_GPU_MIN_API}}", contract.min_api.to_string()),
         ]);
         crate::shell::replace_placeholders_in_dir(output, &replacements)?;
         crate::shell::write_local_properties(output)?;
 
-        let destination = output.join("app/src/main/jniLibs/arm64-v8a");
+        let destination = output.join("app/src/main/jniLibs").join(&contract.abi);
         std::fs::create_dir_all(&destination)?;
-        std::fs::copy(library, destination.join(LIBRARY))?;
+        std::fs::copy(library, destination.join(&contract.library))?;
         Ok(())
     }
 }
@@ -190,14 +227,22 @@ pub struct NativeGpuBackend {
 }
 
 impl NativeGpuBackend {
-    pub fn new(schema: &OrbitalSchema, language: String, backend_url: Option<&str>) -> Result<Self, serde_json::Error> {
+    pub fn new(
+        schema: &OrbitalSchema,
+        language: String,
+        backend_url: Option<&str>,
+    ) -> Result<Self, serde_json::Error> {
         let value = serde_json::to_value(schema)?;
         let program = serde_json::to_string(&orbital_core_eval::util::canonical_json(&value))?;
         let host = match backend_url {
             Some(url) => serde_json::json!({ "mode": "server", "backendUrl": url }),
             None => serde_json::json!({ "mode": "embedded" }),
         };
-        Ok(Self { program, language, host: serde_json::to_string(&host)? })
+        Ok(Self {
+            program,
+            language,
+            host: serde_json::to_string(&host)?,
+        })
     }
 }
 
@@ -224,19 +269,20 @@ mod tests {
 
     #[test]
     fn native_gpu_template_bundles_the_shared_library_and_names_the_app() {
+        let contract = native_gpu_contract();
         let root = std::env::temp_dir().join(format!("orbital-native-gpu-{}", std::process::id()));
         let package = root.join("package");
-        let lib_dir = package.join("native-gpu/android/arm64-v8a");
+        let lib_dir = package.join("native-gpu/android").join(&contract.abi);
         std::fs::create_dir_all(&lib_dir).unwrap();
         let mut library = vec![0u8; 64];
         library[..6].copy_from_slice(b"\x7fELF\x02\x01");
         library[18..20].copy_from_slice(&183u16.to_le_bytes());
-        std::fs::write(lib_dir.join(LIBRARY), &library).unwrap();
+        std::fs::write(lib_dir.join(&contract.library), &library).unwrap();
         let manifest = serde_json::json!({
-            "contractVersion": CONTRACT_VERSION,
-            "abi": ABI,
+            "contractVersion": contract.contract_version,
+            "abi": contract.abi,
             "shellVersion": env!("CARGO_PKG_VERSION"),
-            "featureSet": FEATURE_SET,
+            "featureSet": contract.production_feature_set,
             "sha256": format!("{:x}", Sha256::digest(&library)),
         });
         std::fs::write(
@@ -259,6 +305,7 @@ mod tests {
         let gradle = std::fs::read_to_string(app.join("app/build.gradle.kts")).unwrap();
         assert!(activity.contains("package io.almadar.todo_app;"));
         assert!(gradle.contains("applicationId = \"io.almadar.todo_app\""));
+        assert!(gradle.contains(&format!("minSdk = {}", contract.min_api)));
         assert!(app.join("gradlew").is_file());
         assert!(app.join("gradle/wrapper/gradle-wrapper.jar").is_file());
         assert_eq!(
@@ -266,6 +313,18 @@ mod tests {
                 .unwrap(),
             library
         );
+        let mut research = manifest.clone();
+        research["featureSet"] = serde_json::json!(contract.research_feature_set);
+        std::fs::write(
+            package.join("native-gpu/android/manifest.json"),
+            research.to_string(),
+        )
+        .unwrap();
+        assert!(shell.verified_library().is_err());
+        let mut research_shell = NativeGpuShell::from_package_root(&package);
+        research_shell.research = true;
+        assert!(research_shell.verified_library().is_ok());
+
         let mut bad = manifest;
         bad["featureSet"] = serde_json::json!("native");
         std::fs::write(

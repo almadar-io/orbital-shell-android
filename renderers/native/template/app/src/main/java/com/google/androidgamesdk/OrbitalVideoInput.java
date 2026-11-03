@@ -2,10 +2,13 @@ package com.google.androidgamesdk;
 
 import android.app.Activity;
 import android.graphics.Color;
+import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
+import android.webkit.WebResourceError;
+import android.webkit.WebResourceRequest;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
@@ -54,6 +57,7 @@ public final class OrbitalVideoInput {
                 web.setWebChromeClient(new WebChromeClient());
                 views.put(nodeId, web);
                 ((ViewGroup) host.getWindow().getDecorView()).addView(web);
+                Log.i("OrbitalVideoInput", "mounted node=" + nodeId + " count=" + views.size());
             }
             web.setContentDescription(title);
             int[] surfaceOrigin = new int[2];
@@ -73,9 +77,20 @@ public final class OrbitalVideoInput {
             } else {
                 web.removeJavascriptInterface("OrbitalVideo");
                 web.setWebViewClient(new WebViewClient() {
+                    private boolean failed;
+
+                    @Override
+                    public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
+                        if (request.isForMainFrame() && !failed) {
+                            failed = true;
+                            nativeVideoEvent(nodeId, 2, source, error.getDescription().toString(),
+                                Integer.toString(error.getErrorCode()));
+                        }
+                    }
+
                     @Override
                     public void onPageFinished(WebView view, String loadedUrl) {
-                        nativeVideoEvent(nodeId, 0, source, "", "");
+                        if (!failed) nativeVideoEvent(nodeId, 0, source, "", "");
                     }
                 });
                 web.loadUrl(source);
@@ -98,12 +113,29 @@ public final class OrbitalVideoInput {
         });
     }
 
+    public static void pause() {
+        Activity host = activity;
+        if (host != null) host.runOnUiThread(() -> {
+            if (activity != host) return;
+            for (WebView web : views.values()) web.onPause();
+        });
+    }
+
+    public static void resume() {
+        Activity host = activity;
+        if (host != null) host.runOnUiThread(() -> {
+            if (activity != host) return;
+            for (WebView web : views.values()) web.onResume();
+        });
+    }
+
     private static void removeOnUiThread(int nodeId) {
         WebView web = views.remove(nodeId);
         sources.remove(nodeId);
         if (web == null) return;
         ((ViewGroup) web.getParent()).removeView(web);
         web.destroy();
+        Log.i("OrbitalVideoInput", "removed node=" + nodeId + " count=" + views.size());
     }
 
     private static final class YouTubeBridge {

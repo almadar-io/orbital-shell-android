@@ -44,6 +44,18 @@ public final class MainActivity extends GameActivity {
     }
 
     @Override
+    protected void onPause() {
+        OrbitalVideoInput.pause();
+        super.onPause();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        OrbitalVideoInput.resume();
+    }
+
+    @Override
     public boolean onTouchEvent(MotionEvent event) {
         if (textMenuGesture != null) textMenuGesture.onTouchEvent(event);
         return super.onTouchEvent(event);

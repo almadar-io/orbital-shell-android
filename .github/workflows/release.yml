@@ -44,7 +44,10 @@ jobs:
           export ANDROID_NDK_HOME="$HOME/Library/Android/sdk/ndk/27.3.13750724"
           test -d "$ANDROID_NDK_HOME"
           command -v cargo-ndk
-          cargo ndk -t arm64-v8a -o "$RUNNER_TEMP/native-gpu" build -p orbital-client-dioxus --release --features native-a11y --lib
+          contract=crates/orbital-shell-android/renderers/native/contract.json
+          min_api=$(node -p "JSON.parse(require('fs').readFileSync('$contract', 'utf8')).minApi")
+          features=$(node -p "JSON.parse(require('fs').readFileSync('$contract', 'utf8')).productionFeatureSet")
+          cargo ndk -P "$min_api" -t arm64-v8a -o "$RUNNER_TEMP/native-gpu" build -p orbital-client-dioxus --release --features "$features" --lib
           library="$RUNNER_TEMP/native-gpu/arm64-v8a/liborbital_client_dioxus.so"
           test -s "$library"
           nm_tool="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-nm"
