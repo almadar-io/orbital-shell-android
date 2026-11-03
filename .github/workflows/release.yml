@@ -7,11 +7,62 @@ on:
     tags: ["v*"]
 
 jobs:
+  native_gpu:
+    runs-on: [self-hosted, almadar-mac]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: almadar-io/orbital-rust
+          ref: main
+          path: orbital-rust
+      - name: Checkout pinned submodules
+        shell: bash
+        env:
+          GH_PAT: ${{ secrets.SUBMODULES_TOKEN }}
+        run: |
+          cp ~/.gitconfig "$RUNNER_TEMP/gitconfig" 2>/dev/null || true
+          export GIT_CONFIG_GLOBAL="$RUNNER_TEMP/gitconfig"
+          echo "GIT_CONFIG_GLOBAL=$GIT_CONFIG_GLOBAL" >> "$GITHUB_ENV"
+          git config --global url."https://x-access-token:${GH_PAT}@github.com/".insteadOf "git@github.com:"
+          git -C orbital-rust submodule sync --recursive
+          git -C orbital-rust submodule update --init --recursive
+          test "$(git -C orbital-rust/crates/orbital-shell-android rev-parse HEAD)" = "$GITHUB_SHA" || {
+            echo "orbital-rust main does not pin the tagged Android shell commit" >&2
+            exit 1
+          }
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
+          workspaces: orbital-rust
+      - name: Build the Android native GPU library
+        shell: bash
+        working-directory: orbital-rust
+        run: |
+          export ANDROID_NDK_HOME="$HOME/Library/Android/sdk/ndk/27.3.13750724"
+          test -d "$ANDROID_NDK_HOME"
+          command -v cargo-ndk
+          cargo ndk -t arm64-v8a -o "$RUNNER_TEMP/native-gpu" build -p orbital-client-dioxus --release --features native-a11y --lib
+          library="$RUNNER_TEMP/native-gpu/arm64-v8a/liborbital_client_dioxus.so"
+          test -s "$library"
+          nm_tool="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-nm"
+          test -x "$nm_tool"
+          "$nm_tool" -D "$library" | grep -q ' orbital_native_gpu_accessibility_v1$'
+          cp "$library" "$RUNNER_TEMP/liborbital_client_dioxus.so"
+      - uses: actions/upload-artifact@v5
+        with:
+          name: android-native-gpu-arm64-v8a
+          retention-days: 1
+          path: ${{ runner.temp }}/liborbital_client_dioxus.so
   release:
+    needs: native_gpu
     uses: almadar-io/orbital-core/.github/workflows/program-release.yml@main
     with:
       name: orb-shell-android
       kind: shell
       shell: android
       cargo-args: --bin orb-shell-android
+      android-native-gpu-artifact: android-native-gpu-arm64-v8a
     secrets: inherit

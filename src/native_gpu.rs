@@ -1,0 +1,297 @@
+use orbital_core_base::generate::{Backend, GeneratedFile, GeneratedOutput};
+use orbital_core_base::ir::OirModule;
+use orbital_core_base::schema::OrbitalSchema;
+use orbital_core_base::shell::{Shell, ShellError};
+use serde::Deserialize;
+use sha2::{Digest, Sha256};
+use std::io::Read;
+use std::path::{Path, PathBuf};
+
+const CONTRACT_VERSION: u32 = 1;
+const ABI: &str = "arm64-v8a";
+const FEATURE_SET: &str = "native-a11y";
+const LIBRARY: &str = "liborbital_client_dioxus.so";
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct NativeGpuManifest {
+    contract_version: u32,
+    abi: String,
+    shell_version: String,
+    feature_set: String,
+    sha256: String,
+}
+
+pub struct NativeGpuShell {
+    template: PathBuf,
+    bundle: PathBuf,
+}
+
+impl NativeGpuShell {
+    pub fn new() -> Result<Self, ShellError> {
+        if let Some(bundle) = std::env::var_os("ORBITAL_NATIVE_GPU_LIB_DIR") {
+            return Ok(Self {
+                template: Path::new(env!("CARGO_MANIFEST_DIR")).join("renderers/native/template"),
+                bundle: PathBuf::from(bundle),
+            });
+        }
+        let executable = std::env::current_exe()?;
+        let package = executable.parent().and_then(Path::parent).ok_or_else(|| {
+            ShellError::NotFound(format!(
+                "native GPU shell package beside {}",
+                executable.display()
+            ))
+        })?;
+        Ok(Self::from_package_root(package))
+    }
+
+    fn from_package_root(package: &Path) -> Self {
+        Self {
+            template: package.join("templates/android-native-gpu"),
+            bundle: package.join("native-gpu/android"),
+        }
+    }
+
+    fn verified_library(&self) -> Result<PathBuf, ShellError> {
+        let manifest_path = self.bundle.join("manifest.json");
+        let manifest: NativeGpuManifest =
+            serde_json::from_slice(&std::fs::read(&manifest_path)?)
+                .map_err(|e| ShellError::Template(format!("{}: {e}", manifest_path.display())))?;
+        if manifest.contract_version != CONTRACT_VERSION
+            || manifest.abi != ABI
+            || manifest.shell_version != env!("CARGO_PKG_VERSION")
+            || manifest.feature_set != FEATURE_SET
+        {
+            return Err(ShellError::Template(format!(
+                "{}: expected native GPU contract {CONTRACT_VERSION}, ABI {ABI}, shell {}, feature set {FEATURE_SET}",
+                manifest_path.display(),
+                env!("CARGO_PKG_VERSION")
+            )));
+        }
+        let library = self.bundle.join(ABI).join(LIBRARY);
+        let mut file = std::fs::File::open(&library)?;
+        let mut elf = [0u8; 20];
+        file.read_exact(&mut elf)?;
+        if &elf[..6] != b"\x7fELF\x02\x01" || u16::from_le_bytes([elf[18], elf[19]]) != 183 {
+            return Err(ShellError::Template(format!(
+                "{}: expected an Android arm64 ELF library",
+                library.display()
+            )));
+        }
+        let mut digest = Sha256::new();
+        digest.update(elf);
+        let mut chunk = [0u8; 65536];
+        loop {
+            let size = file.read(&mut chunk)?;
+            if size == 0 {
+                break;
+            }
+            digest.update(&chunk[..size]);
+        }
+        if format!("{:x}", digest.finalize()) != manifest.sha256 {
+            return Err(ShellError::Template(format!(
+                "{}: SHA-256 does not match manifest",
+                library.display()
+            )));
+        }
+        Ok(library)
+    }
+}
+
+impl Shell for NativeGpuShell {
+    fn name(&self) -> &'static str {
+        "android-native-gpu"
+    }
+    fn description(&self) -> &'static str {
+        "Android GameActivity with the shared Dioxus native GPU renderer"
+    }
+    fn extensions(&self) -> &[&'static str] {
+        &["java"]
+    }
+    fn template_path(&self) -> &Path {
+        &self.template
+    }
+    fn generated_dir(&self) -> &str {
+        "app/src/main/assets"
+    }
+    fn build_command(&self) -> &str {
+        "./gradlew assembleRelease"
+    }
+    fn dev_command(&self) -> &str {
+        "./gradlew installDebug"
+    }
+    fn test_command(&self) -> &str {
+        "./gradlew test"
+    }
+
+    fn validate_structure(&self, output: &Path) -> Result<(), ShellError> {
+        for file in [
+            "settings.gradle.kts",
+            "app/build.gradle.kts",
+            "app/src/main/AndroidManifest.xml",
+        ] {
+            if !output.join(file).is_file() {
+                return Err(ShellError::InvalidStructure {
+                    path: output.join(file),
+                    message: format!("Missing required file: {file}"),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn copy_template(&self, output: &Path) -> Result<(), ShellError> {
+        if !self.template.is_dir() {
+            return Err(ShellError::NotFound(self.template.display().to_string()));
+        }
+        crate::shell::copy_dir_recursive(&self.template, output)?;
+        let shared = orbital_core_base::renderer_packs::shell_template(
+            "android-shell",
+            Path::new(env!("CARGO_MANIFEST_DIR")),
+        );
+        std::fs::copy(shared.join("gradlew"), output.join("gradlew"))?;
+        crate::shell::copy_dir_recursive(
+            &shared.join("gradle/wrapper"),
+            &output.join("gradle/wrapper"),
+        )?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let file = output.join("gradlew");
+            let mut permissions = std::fs::metadata(&file)?.permissions();
+            permissions.set_mode(permissions.mode() | 0o111);
+            std::fs::set_permissions(file, permissions)?;
+        }
+        Ok(())
+    }
+
+    fn init_project(&self, output: &Path, project_name: &str) -> Result<(), ShellError> {
+        let library = self.verified_library()?;
+        self.copy_template(output)?;
+        let package = format!("io.almadar.{}", crate::shell::to_package_name(project_name));
+        let replacements = std::collections::HashMap::from([
+            ("{{APP_PACKAGE}}", package),
+            ("{{APP_TITLE}}", project_name.to_string()),
+        ]);
+        crate::shell::replace_placeholders_in_dir(output, &replacements)?;
+        crate::shell::write_local_properties(output)?;
+
+        let destination = output.join("app/src/main/jniLibs/arm64-v8a");
+        std::fs::create_dir_all(&destination)?;
+        std::fs::copy(library, destination.join(LIBRARY))?;
+        Ok(())
+    }
+}
+
+pub struct NativeGpuBackend {
+    program: String,
+    language: String,
+    host: String,
+}
+
+impl NativeGpuBackend {
+    pub fn new(schema: &OrbitalSchema, language: String, backend_url: Option<&str>) -> Result<Self, serde_json::Error> {
+        let value = serde_json::to_value(schema)?;
+        let program = serde_json::to_string(&orbital_core_eval::util::canonical_json(&value))?;
+        let host = match backend_url {
+            Some(url) => serde_json::json!({ "mode": "server", "backendUrl": url }),
+            None => serde_json::json!({ "mode": "embedded" }),
+        };
+        Ok(Self { program, language, host: serde_json::to_string(&host)? })
+    }
+}
+
+impl Backend for NativeGpuBackend {
+    fn name(&self) -> &'static str {
+        "android-native-gpu"
+    }
+
+    fn generate(&self, _module: &OirModule) -> GeneratedOutput {
+        GeneratedOutput {
+            files: vec![
+                GeneratedFile::new("app/src/main/assets/program.orb", self.program.clone()),
+                GeneratedFile::new("app/src/main/assets/language.json", self.language.clone()),
+                GeneratedFile::new("app/src/main/assets/native-host.json", self.host.clone()),
+            ],
+            warnings: Vec::new(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_gpu_template_bundles_the_shared_library_and_names_the_app() {
+        let root = std::env::temp_dir().join(format!("orbital-native-gpu-{}", std::process::id()));
+        let package = root.join("package");
+        let lib_dir = package.join("native-gpu/android/arm64-v8a");
+        std::fs::create_dir_all(&lib_dir).unwrap();
+        let mut library = vec![0u8; 64];
+        library[..6].copy_from_slice(b"\x7fELF\x02\x01");
+        library[18..20].copy_from_slice(&183u16.to_le_bytes());
+        std::fs::write(lib_dir.join(LIBRARY), &library).unwrap();
+        let manifest = serde_json::json!({
+            "contractVersion": CONTRACT_VERSION,
+            "abi": ABI,
+            "shellVersion": env!("CARGO_PKG_VERSION"),
+            "featureSet": FEATURE_SET,
+            "sha256": format!("{:x}", Sha256::digest(&library)),
+        });
+        std::fs::write(
+            package.join("native-gpu/android/manifest.json"),
+            manifest.to_string(),
+        )
+        .unwrap();
+        crate::shell::copy_dir_recursive(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("renderers/native/template"),
+            &package.join("templates/android-native-gpu"),
+        )
+        .unwrap();
+        let app = root.join("todo-app");
+        let shell = NativeGpuShell::from_package_root(&package);
+        shell.init_project(&app, "todo-app").unwrap();
+        let activity = std::fs::read_to_string(
+            app.join("app/src/main/java/io/almadar/nativegpu/MainActivity.java"),
+        )
+        .unwrap();
+        let gradle = std::fs::read_to_string(app.join("app/build.gradle.kts")).unwrap();
+        assert!(activity.contains("package io.almadar.todo_app;"));
+        assert!(gradle.contains("applicationId = \"io.almadar.todo_app\""));
+        assert!(app.join("gradlew").is_file());
+        assert!(app.join("gradle/wrapper/gradle-wrapper.jar").is_file());
+        assert_eq!(
+            std::fs::read(app.join("app/src/main/jniLibs/arm64-v8a/liborbital_client_dioxus.so"))
+                .unwrap(),
+            library
+        );
+        let mut bad = manifest;
+        bad["featureSet"] = serde_json::json!("native");
+        std::fs::write(
+            package.join("native-gpu/android/manifest.json"),
+            bad.to_string(),
+        )
+        .unwrap();
+        assert!(shell.verified_library().is_err());
+        let backend = NativeGpuBackend {
+            program: "{}".into(),
+            language: "{}".into(),
+            host: r#"{"mode":"embedded"}"#.into(),
+        };
+        let assets = backend.generate(&OirModule::new("test", "1.0.0")).files;
+        assert_eq!(
+            assets
+                .iter()
+                .map(|file| file.path.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "app/src/main/assets/program.orb",
+                "app/src/main/assets/language.json",
+                "app/src/main/assets/native-host.json"
+            ]
+        );
+        assert_eq!(assets[2].content, r#"{"mode":"embedded"}"#);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}

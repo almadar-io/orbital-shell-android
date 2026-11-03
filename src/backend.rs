@@ -368,9 +368,7 @@ fn generate_services_file(services: &[orbital_core_base::schema::ServiceRef]) ->
 /// `orbital_kernel_init` resolves on-device, so the route always addresses
 /// the orbital the local kernel actually registered.
 fn generate_api_client_file(_module: &OirModule) -> GeneratedFile {
-    let content = format!(
-        include_str!("../hosts/APIClient.kt.tpl"),
-    );
+    let content = format!(include_str!("../hosts/APIClient.kt.tpl"),);
 
     GeneratedFile {
         path: "ApiClient.kt".to_string(),
@@ -412,8 +410,7 @@ fun slotRole(name: String): SlotRole = when {
 }
 
 fn generate_effect_handlers_file() -> GeneratedFile {
-    let content = include_str!("../runtime/EffectHandlers.kt.tpl")
-    .to_string();
+    let content = include_str!("../runtime/EffectHandlers.kt.tpl").to_string();
 
     GeneratedFile {
         path: "EffectHandlers.kt".to_string(),
@@ -531,8 +528,7 @@ fn generate_await_renders_file(module: &OirModule) -> GeneratedFile {
     let rows = serde_json::to_string(&rows)
         .expect("await-render rows serialize")
         .replace('$', "${'$'}");
-    let content = include_str!("../runtime/AwaitRenders.kt.tpl")
-    .replace("__ROWS__", &rows);
+    let content = include_str!("../runtime/AwaitRenders.kt.tpl").replace("__ROWS__", &rows);
     GeneratedFile {
         path: "AwaitRenders.kt".to_string(),
         content,
@@ -1286,8 +1282,11 @@ impl TargetTypeRenderer for KotlinRenderer<'_> {
                     hoisted: self.hoisted,
                 };
                 let fields = match &v.field_type {
-                    OirType::Struct { fields, additional: _additional } => {
-                        fields.iter()
+                    OirType::Struct {
+                        fields,
+                        additional: _additional,
+                    } => fields
+                        .iter()
                         .map(|f| {
                             let grandchild = KotlinRenderer {
                                 context_name: format!(
@@ -1308,8 +1307,7 @@ impl TargetTypeRenderer for KotlinRenderer<'_> {
                             )
                         })
                         .collect::<Vec<_>>()
-                        .join(", ")
-                    },
+                        .join(", "),
                     other => {
                         format!("val value: {}", render_type(&child, other, None))
                     }
@@ -1402,8 +1400,16 @@ impl TargetTypeRenderer for KotlinRenderer<'_> {
     fn classify_optional(&self, _inner_ty: &OirType, inner: TypeMappingClass) -> TypeMappingClass {
         inner
     }
-    fn classify_struct_ty(&self, _fields: &[OirField], additional: Option<&OirType>) -> TypeMappingClass {
-        if additional.is_some() { TypeMappingClass::Lossy } else { TypeMappingClass::Faithful }
+    fn classify_struct_ty(
+        &self,
+        _fields: &[OirField],
+        additional: Option<&OirType>,
+    ) -> TypeMappingClass {
+        if additional.is_some() {
+            TypeMappingClass::Lossy
+        } else {
+            TypeMappingClass::Faithful
+        }
     }
     fn classify_union_ty(&self, variants: &[OirField]) -> TypeMappingClass {
         // A named sealed class with @Serializable subtypes carries every
@@ -1830,16 +1836,22 @@ mod tests {
             "control: one resolver call site, the stored content is never rewritten"
         );
         let bridge = include_str!("../renderers/compose/renderers/bridge/OrbitalKernelBridge.kt");
-        assert!(bridge.contains("external fun nativeResolveRows(handle: Long, refJson: String): String?"));
+        assert!(bridge
+            .contains("external fun nativeResolveRows(handle: Long, refJson: String): String?"));
         assert!(bridge.contains("fun resolvingRowSets(node: JsonElement): JsonElement"));
         assert!(
-            vm.contains("catch (e: KernelWireException) { errorStateNode(e.message ?: e.toString()) }"),
+            vm.contains(
+                "catch (e: KernelWireException) { errorStateNode(e.message ?: e.toString()) }"
+            ),
             "a failed resolve paints the slot as an error-state, never an empty list"
         );
         assert!(
             vm.contains(r#"JsonObject(mapOf("type" to JsonPrimitive("error-state"), "message" to JsonPrimitive(message)))"#)
         );
-        assert!(!bridge.contains("getOrDefault(JsonArray(emptyList()))"), "control: no failure becomes an empty list");
+        assert!(
+            !bridge.contains("getOrDefault(JsonArray(emptyList()))"),
+            "control: no failure becomes an empty list"
+        );
     }
 
     #[test]
@@ -1915,8 +1927,12 @@ mod tests {
     fn effect_handlers_post_every_emit_to_the_renderer_bus() {
         let content = generate_effect_handlers_file().content;
         assert!(content.contains("import generated.patterns.core.AlmadarBus"));
-        let post = content.find("AlmadarBus.post(event, arr.getOrNull(2))").expect("emit posts to the bus");
-        let forward = content.find("onEmit(sourceTrait, event, arr.getOrNull(2))").unwrap();
+        let post = content
+            .find("AlmadarBus.post(event, arr.getOrNull(2))")
+            .expect("emit posts to the bus");
+        let forward = content
+            .find("onEmit(sourceTrait, event, arr.getOrNull(2))")
+            .unwrap();
         assert!(post < forward);
     }
 
@@ -2284,7 +2300,10 @@ mod tests {
         let content = generate_view_model_file(&module).content;
         assert!(content.contains("private var kernel: OrbitalKernel? = null"));
         assert!(content.contains("kernelCalls.withLock { withContext(Dispatchers.Default) { k.dispatch(trait, entityId, event, payloadJson) } }"));
-        assert!(content.contains("} catch (failure: KernelWireException) {"), "a dispatch the kernel answers badly fails typed");
+        assert!(
+            content.contains("} catch (failure: KernelWireException) {"),
+            "a dispatch the kernel answers badly fails typed"
+        );
         assert!(content.contains("KernelDispatchMode.hybridClientOnly ->"));
         assert!(content.contains("KernelDispatchMode.runtimeOptimistic ->"));
         assert!(content.contains("KernelDispatchMode.persistedAwaited ->"));
@@ -2377,10 +2396,12 @@ mod tests {
         assert!(vm.contains(
             "kernelCalls.withLock { withContext(Dispatchers.Default) { k.dispatch(trait, entityId, event, payloadJson) } }"
         ));
-        assert!(
-            vm.contains("Result.success(kernelCalls.withLock { k.applyServerResponse(raw, alreadyDelivered) })")
-        );
-        assert!(vm.contains("foldResponse(kernelCalls.withLock { k.restore(requestTrait, null, snapshot) })"));
+        assert!(vm.contains(
+            "Result.success(kernelCalls.withLock { k.applyServerResponse(raw, alreadyDelivered) })"
+        ));
+        assert!(vm.contains(
+            "foldResponse(kernelCalls.withLock { k.restore(requestTrait, null, snapshot) })"
+        ));
         // Control: the unlocked dispatch spelling is gone.
         assert!(!vm.contains("val result = withContext(Dispatchers.Default) { k.dispatch("));
         assert!(!vm.contains("= k.applyServerResponse("));
@@ -2451,7 +2472,10 @@ mod tests {
         assert!(!vm.contains("ORBITAL_NAME"));
         let bridge = include_str!("../renderers/compose/renderers/bridge/OrbitalKernelBridge.kt");
         assert!(bridge.contains("typealias KernelDispatchResult = KernelDispatchWire"));
-        assert!(!bridge.contains("orbital = wire.orbital,"), "control: the bridge no longer copies the wire field by field");
+        assert!(
+            !bridge.contains("orbital = wire.orbital,"),
+            "control: the bridge no longer copies the wire field by field"
+        );
     }
 
     /// `initAllTraits` must fire `INIT` for every `TRAITS_WITH_INIT` member once,
@@ -2495,7 +2519,10 @@ mod tests {
         assert!(content.contains("private val effectHandlers = EffectHandlers("));
         assert!(content.contains("response.clientEffectsByTrait.orEmpty().forEach { entry ->"));
         assert!(content.contains("effectHandlers.apply(entry.effect, entry.traitName)"));
-        assert!(!content.contains("obj[\"traitName\"]"), "control: the entry is read through its generated model, not by key");
+        assert!(
+            !content.contains("obj[\"traitName\"]"),
+            "control: the entry is read through its generated model, not by key"
+        );
         // The "emit" client effect still routes through onEmit == sendEvent
         // (CLIENT_EFFECT_KINDS coverage; the kernel never actually produces it).
         assert!(content.contains("trait, event, payload -> sendEvent(trait, event, payload)"));
@@ -2942,7 +2969,8 @@ mod tests {
             fields: vec![
                 OirField::new("geo", struct_ty.clone()),
                 OirField::new("alt", struct_ty),
-            ].into(),
+            ]
+            .into(),
         };
         let (ty, hoisted) = oir_type_to_kotlin_hoisted(&nested, "Ctx");
         assert_eq!(ty, "Ctx");
@@ -2974,7 +3002,8 @@ mod tests {
                         fields: vec![OirField::new("kind", OirType::String)].into(),
                     },
                 ),
-            ].into(),
+            ]
+            .into(),
         };
         let (ty, hoisted) = oir_type_to_kotlin_hoisted(&union_ty, "Ctx");
         assert_eq!(ty, "Ctx");
@@ -3567,9 +3596,7 @@ mod tests {
     #[test]
     fn page_access_viewer_is_authenticated_by_a_session_or_the_debug_persona_token() {
         let vm = generate_view_model_file(&OirModule::new("TestApp", "1.0.0")).content;
-        assert!(
-            vm.contains("val hasLaunchToken: Boolean get() = DebugLaunch.authToken != null")
-        );
+        assert!(vm.contains("val hasLaunchToken: Boolean get() = DebugLaunch.authToken != null"));
         let app = generate_app_file(&access_module(None)).content;
         assert!(app.contains("if (session != null || viewModel.hasLaunchToken)"));
     }
@@ -3588,11 +3615,20 @@ mod tests {
         ));
         assert!(toggle.contains("snap.theme?.let { applyResolvedTheme(it) }"));
         assert!(toggle.contains("canvasTheme = snap.canvasTheme"));
-        assert!(toggle.contains("motion = snap.motion"), "the mode switch re-reads the resolved motion");
+        assert!(
+            toggle.contains("motion = snap.motion"),
+            "the mode switch re-reads the resolved motion"
+        );
         assert!(app.contains("LocalAlmadarResolvedMotion provides viewModel.motion"));
-        assert!(app.contains(".almadarSurfaceEnter(\"pageEnter\", AlmadarEnterTiming.Page, replayKey = pageName)"));
-        assert!(app.contains("Modifier.fillMaxWidth().almadarSlotEnter(content, slotEnterKey(name, content))"));
-        assert!(app.contains(".almadarSurfaceEnter(\"toastEnter\", AlmadarEnterTiming.Toast, replayKey = name)"));
+        assert!(app.contains(
+            ".almadarSurfaceEnter(\"pageEnter\", AlmadarEnterTiming.Page, replayKey = pageName)"
+        ));
+        assert!(app.contains(
+            "Modifier.fillMaxWidth().almadarSlotEnter(content, slotEnterKey(name, content))"
+        ));
+        assert!(app.contains(
+            ".almadarSurfaceEnter(\"toastEnter\", AlmadarEnterTiming.Toast, replayKey = name)"
+        ));
         assert!(
             !toggle.contains("sendEvent"),
             "the toggle is a local control, not a bus event"
@@ -3650,10 +3686,14 @@ mod tests {
         let module = OirModule::new("TestApp", "1.0.0");
         let vm = generate_view_model_file(&module).content;
         let start = vm.find("private suspend fun postServerLegAndFold").unwrap();
-        let end = vm[start..].find("private suspend fun postOwedLegs").unwrap();
+        let end = vm[start..]
+            .find("private suspend fun postOwedLegs")
+            .unwrap();
         assert!(vm[start..start + end].contains("postOwedLegs(applied.serverLegs, requestTrait)"));
         let owed_start = vm.find("private suspend fun postOwedLegs").unwrap();
-        let owed_end = vm[owed_start..].find("private suspend fun resyncFrames").unwrap();
+        let owed_end = vm[owed_start..]
+            .find("private suspend fun resyncFrames")
+            .unwrap();
         let owed = &vm[owed_start..owed_start + owed_end];
         assert!(owed.contains("queue.addAll(applied.serverLegs)"));
         assert!(owed.contains("queue.removeFirst()"));
@@ -3692,7 +3732,10 @@ mod tests {
         let branch_end = rejected + vm[rejected..].find("private suspend fun").unwrap();
         assert!(!vm[rejected..branch_end].contains("foldResponse(applied.response)"));
         let resync = vm.find("private suspend fun resyncFrames(").unwrap();
-        assert!(vm[resync..].contains("k.applyServerResponse(raw, emptyList()) }.response)"), "control: the resync fold applies the snapshot");
+        assert!(
+            vm[resync..].contains("k.applyServerResponse(raw, emptyList()) }.response)"),
+            "control: the resync fold applies the snapshot"
+        );
     }
 
     #[test]
@@ -3812,18 +3855,39 @@ mod tests {
     #[test]
     fn sign_out_is_a_host_ask_the_view_model_answers_not_an_event_the_slot_content_intercepts() {
         let app = generate_app_file(&OirModule::new("TestApp", "1.0.0")).content;
-        assert!(!app.contains("signOut()") && !app.contains("SIGN_OUT_EVENT"), "{app}");
+        assert!(
+            !app.contains("signOut()") && !app.contains("SIGN_OUT_EVENT"),
+            "{app}"
+        );
         let vm = generate_view_model_file(&OirModule::new("TestApp", "1.0.0")).content;
         assert!(!vm.contains("SIGN_OUT_EVENT"));
-        assert!(vm.contains("EMBEDDED_TRAITS, _navigationEvents, _notifications, this::answerHostAsk)"));
-        let answer = vm.find("fun answerHostAsk(op: String, args: List<JsonElement>, completion: JsonElement?)").expect("the view model answers host asks");
+        assert!(
+            vm.contains("EMBEDDED_TRAITS, _navigationEvents, _notifications, this::answerHostAsk)")
+        );
+        let answer = vm
+            .find(
+                "fun answerHostAsk(op: String, args: List<JsonElement>, completion: JsonElement?)",
+            )
+            .expect("the view model answers host asks");
         let body = &vm[answer..];
         let sign_out = body.find("\"auth/sign-out\" -> {").unwrap();
-        let sign_in = body.find("\"auth/sign-in\" -> viewModelScope.launch").unwrap();
-        let refuse = body.find("refused: this host has no action for it").unwrap();
-        assert!(sign_out < sign_in && sign_in < refuse, "an unknown op is refused after the ops this host answers");
+        let sign_in = body
+            .find("\"auth/sign-in\" -> viewModelScope.launch")
+            .unwrap();
+        let refuse = body
+            .find("refused: this host has no action for it")
+            .unwrap();
+        assert!(
+            sign_out < sign_in && sign_in < refuse,
+            "an unknown op is refused after the ops this host answers"
+        );
         let effects = generate_effect_handlers_file().content;
-        assert!(effects.contains("\"host-ask\" -> {") && effects.contains("onHostAsk(op, arr.getOrNull(2)?.jsonArray ?: emptyList(), arr.getOrNull(3))"));
+        assert!(
+            effects.contains("\"host-ask\" -> {")
+                && effects.contains(
+                    "onHostAsk(op, arr.getOrNull(2)?.jsonArray ?: emptyList(), arr.getOrNull(3))"
+                )
+        );
     }
 
     /// `auth/sign-in` returns its answer to the asking trait on the route it declared (EXEC-DIST-13): a success carries
@@ -3831,12 +3895,23 @@ mod tests {
     #[test]
     fn sign_in_is_a_host_ask_whose_answer_returns_to_the_asking_trait_on_its_declared_route() {
         let vm = generate_view_model_file(&OirModule::new("TestApp", "1.0.0")).content;
-        let at = vm.find("private suspend fun answerSignIn(").expect("the view model answers auth/sign-in");
+        let at = vm
+            .find("private suspend fun answerSignIn(")
+            .expect("the view model answers auth/sign-in");
         let body = &vm[at..];
-        assert!(body.contains("auth.signInWithPassword(email, password)") && body.contains("auth.signInWithCustomToken(token)"));
-        assert!(body.contains("\"google\", \"emailLink\" -> {") && body.contains("kind = \"unavailable\""));
+        assert!(
+            body.contains("auth.signInWithPassword(email, password)")
+                && body.contains("auth.signInWithCustomToken(token)")
+        );
+        assert!(
+            body.contains("\"google\", \"emailLink\" -> {")
+                && body.contains("kind = \"unavailable\"")
+        );
         let ret = &vm[vm.find("private fun returnHostAsk(").unwrap()..];
-        assert!(ret.contains("else declared[\"failure\"]) as? JsonPrimitive)?.contentOrNull ?: return"), "an undeclared route fires nothing");
+        assert!(
+            ret.contains("else declared[\"failure\"]) as? JsonPrimitive)?.contentOrNull ?: return"),
+            "an undeclared route fires nothing"
+        );
         assert!(ret.contains("payload[\"key\"] = JsonPrimitive(it)"));
         assert!(ret.contains("sendEvent(trait, event, JsonObject(payload), (declared[\"entityId\"] as? JsonPrimitive)?.contentOrNull)"));
     }
@@ -3846,8 +3921,12 @@ mod tests {
     fn consent_is_a_host_ask_this_host_answers_unavailable_by_name() {
         let vm = generate_view_model_file(&OirModule::new("TestApp", "1.0.0")).content;
         let body = &vm[vm.find("fun answerHostAsk(").unwrap()..];
-        let consent = body.find("\"auth/consent\" -> {").expect("auth/consent has its own case");
-        let refuse = body.find("refused: this host has no action for it").unwrap();
+        let consent = body
+            .find("\"auth/consent\" -> {")
+            .expect("auth/consent has its own case");
+        let refuse = body
+            .find("refused: this host has no action for it")
+            .unwrap();
         assert!(consent < refuse);
         assert!(body[consent..refuse].contains("returnHostAsk(completion, error = \"auth/consent: this host has no Custom Tabs authorization flow\", kind = \"unavailable\")"));
     }
@@ -3893,9 +3972,13 @@ mod tests {
         let mut scorecard = OirPage::new("Scorecard", "/scorecard");
         scorecard.is_initial = true;
         module.pages.push(scorecard);
-        assert!(generate_app_file(&module).content.contains(r#"startDestination = "/scorecard""#));
+        assert!(generate_app_file(&module)
+            .content
+            .contains(r#"startDestination = "/scorecard""#));
         module.pages[1].is_initial = false;
-        assert!(generate_app_file(&module).content.contains(r#"startDestination = "/home""#));
+        assert!(generate_app_file(&module)
+            .content
+            .contains(r#"startDestination = "/home""#));
     }
 
     #[test]
@@ -3908,7 +3991,10 @@ mod tests {
             let end = app[at..].find("rootReplacements.collect").unwrap();
             app[at..at + end].to_string()
         };
-        assert!(!sink_of(&module).contains("navController.navigate(\"/missing\")"), "control: no notFound page, no fallback");
+        assert!(
+            !sink_of(&module).contains("navController.navigate(\"/missing\")"),
+            "control: no notFound page, no fallback"
+        );
         let mut missing = OirPage::new("Missing", "/missing");
         missing.is_not_found = true;
         module.pages.push(missing);
@@ -4006,9 +4092,7 @@ mod tests {
         assert!(vm.contains("k.frame(nowMs)"));
         let fold = vm.find("private suspend fun foldFrame(").unwrap();
         let body = &vm[fold..fold + vm[fold..].find("\n    }\n").unwrap()];
-        assert!(
-            body.contains("foldResponse(frame.response)")
-        );
+        assert!(body.contains("foldResponse(frame.response)"));
         assert!(body.contains("foldDispatch(it.trait, it.dispatch)"));
         assert_eq!(
             vm.matches("private suspend fun foldDispatch(").count(),

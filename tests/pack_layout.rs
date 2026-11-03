@@ -31,7 +31,10 @@ fn files_under(dir: &Path, out: &mut Vec<PathBuf>) {
 #[test]
 fn no_platform_source_lives_under_src() {
     let mut files = Vec::new();
-    files_under(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut files);
+    files_under(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+        &mut files,
+    );
     let offenders: Vec<_> = files
         .iter()
         .filter(|p| {
@@ -40,14 +43,20 @@ fn no_platform_source_lives_under_src() {
                 .is_some_and(|e| PLATFORM_EXTENSIONS.contains(&e))
         })
         .collect();
-    assert!(offenders.is_empty(), "platform sources under src/: {offenders:?}");
+    assert!(
+        offenders.is_empty(),
+        "platform sources under src/: {offenders:?}"
+    );
 }
 
 #[test]
 fn the_pack_ships_the_bridge_sources() {
     let pack = orbital_shell_android::require_renderer_pack().unwrap();
     for file in BRIDGE_FILES {
-        assert!(pack.source(&format!("bridge/{file}")).is_some(), "pack missing bridge/{file}");
+        assert!(
+            pack.source(&format!("bridge/{file}")).is_some(),
+            "pack missing bridge/{file}"
+        );
     }
     assert!(pack.source("bridge/tests/OrbitalAuthTest.kt").is_some());
 }
@@ -62,14 +71,20 @@ fn a_generated_app_references_the_packs_bridge_files() {
             .iter()
             .find(|f| f.path == format!("patterns/core/bridge/{file}"))
             .unwrap_or_else(|| panic!("app does not carry bridge/{file}"));
-        assert_eq!(Some(emitted.content.as_str()), pack.source(&format!("bridge/{file}")));
+        assert_eq!(
+            Some(emitted.content.as_str()),
+            pack.source(&format!("bridge/{file}"))
+        );
     }
 }
 
 #[test]
 fn the_bridge_tests_go_to_the_test_source_set_only() {
     let output = AndroidBackend::new().generate(&OirModule::new("Layout", "1.0.0"));
-    assert!(output.files.iter().all(|f| !f.path.contains("bridge/tests/")));
+    assert!(output
+        .files
+        .iter()
+        .all(|f| !f.path.contains("bridge/tests/")));
     assert!(output
         .files
         .iter()
