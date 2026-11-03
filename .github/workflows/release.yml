@@ -38,6 +38,7 @@ jobs:
           cache-bin: false
           workspaces: orbital-rust
       - name: Build the Android native GPU library
+        id: native_gpu_library
         shell: bash
         working-directory: orbital-rust
         run: |
@@ -47,18 +48,20 @@ jobs:
           contract=crates/orbital-shell-android/renderers/native/contract.json
           min_api=$(node -p "JSON.parse(require('fs').readFileSync('$contract', 'utf8')).minApi")
           features=$(node -p "JSON.parse(require('fs').readFileSync('$contract', 'utf8')).productionFeatureSet")
-          cargo ndk -P "$min_api" -t arm64-v8a -o "$RUNNER_TEMP/native-gpu" build -p orbital-client-dioxus --release --features "$features" --lib
-          library="$RUNNER_TEMP/native-gpu/arm64-v8a/liborbital_client_dioxus.so"
+          library_name=$(node -p "JSON.parse(require('fs').readFileSync('$contract', 'utf8')).library")
+          cargo ndk -P "$min_api" -t arm64-v8a -o "$RUNNER_TEMP/native-gpu" build -p orbital-android-native-gpu --release --features "$features" --lib
+          library="$RUNNER_TEMP/native-gpu/arm64-v8a/$library_name"
           test -s "$library"
           nm_tool="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-nm"
           test -x "$nm_tool"
           "$nm_tool" -D "$library" | grep -q ' orbital_native_gpu_accessibility_v1$'
-          cp "$library" "$RUNNER_TEMP/liborbital_client_dioxus.so"
+          cp "$library" "$RUNNER_TEMP/$library_name"
+          echo "library=$library_name" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v5
         with:
           name: android-native-gpu-arm64-v8a
           retention-days: 1
-          path: ${{ runner.temp }}/liborbital_client_dioxus.so
+          path: ${{ runner.temp }}/${{ steps.native_gpu_library.outputs.library }}
   release:
     needs: native_gpu
     uses: almadar-io/orbital-core/.github/workflows/program-release.yml@main

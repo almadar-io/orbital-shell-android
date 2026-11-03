@@ -303,13 +303,22 @@ mod tests {
         )
         .unwrap();
         let gradle = std::fs::read_to_string(app.join("app/build.gradle.kts")).unwrap();
+        let android_manifest =
+            std::fs::read_to_string(app.join("app/src/main/AndroidManifest.xml")).unwrap();
+        let library_name = contract
+            .library
+            .strip_prefix("lib")
+            .and_then(|name| name.strip_suffix(".so"))
+            .unwrap();
         assert!(activity.contains("package io.almadar.todo_app;"));
+        assert!(activity.contains(&format!("System.loadLibrary(\"{library_name}\")")));
+        assert!(android_manifest.contains(&format!("android:value=\"{library_name}\"")));
         assert!(gradle.contains("applicationId = \"io.almadar.todo_app\""));
         assert!(gradle.contains(&format!("minSdk = {}", contract.min_api)));
         assert!(app.join("gradlew").is_file());
         assert!(app.join("gradle/wrapper/gradle-wrapper.jar").is_file());
         assert_eq!(
-            std::fs::read(app.join("app/src/main/jniLibs/arm64-v8a/liborbital_client_dioxus.so"))
+            std::fs::read(app.join("app/src/main/jniLibs/arm64-v8a/liborbital_android_native_gpu.so"))
                 .unwrap(),
             library
         );

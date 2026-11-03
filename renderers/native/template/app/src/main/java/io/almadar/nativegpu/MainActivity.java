@@ -17,7 +17,7 @@ public final class MainActivity extends GameActivity {
     private GestureDetector textMenuGesture;
 
     static {
-        System.loadLibrary("orbital_client_dioxus");
+        System.loadLibrary("orbital_android_native_gpu");
     }
 
     @Override

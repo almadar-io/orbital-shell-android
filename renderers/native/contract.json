@@ -1,7 +1,7 @@
 {
   "contractVersion": 1,
   "abi": "arm64-v8a",
-  "library": "liborbital_client_dioxus.so",
+  "library": "liborbital_android_native_gpu.so",
   "minApi": 26,
   "productionFeatureSet": "native-a11y",
   "researchFeatureSet": "native-a11y,native-audio,research-audio,research-drag,research-dock,research-video"
