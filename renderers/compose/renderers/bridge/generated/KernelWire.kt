@@ -173,7 +173,8 @@ data class KernelFrameDelta(
     val from: Long,
     val to: Long,
     val ops: List<JsonElement>,
-    val identity: KernelFrameIdentity? = null
+    val identity: KernelFrameIdentity? = null,
+    val theme: KernelFrameTheme? = null
 )
 
 @Serializable(with = KernelFrameDispatchSerializer::class)
@@ -199,6 +200,11 @@ object KernelFrameDispatchSerializer : KSerializer<KernelFrameDispatch> {
 @Serializable
 data class KernelFrameIdentity(
     val user: JsonElement? = null
+)
+
+@Serializable
+data class KernelFrameTheme(
+    val key: String? = null
 )
 
 @Serializable
