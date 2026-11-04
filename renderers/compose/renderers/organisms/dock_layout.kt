@@ -131,6 +131,7 @@ fun DockLayoutRenderer(
             val showSecondary = secondary != null && !secondaryCollapsed
             val sidebarShare = props.int("sidebarWidth", 20).coerceIn(1, 99)
             val bottomShare = props.int("bottomPanelHeight", 30).coerceIn(1, 99)
+            val secondaryShare = props.int("secondarySidebarWidth", 25).coerceIn(1, 99)
             Column(modifier = Modifier.fillMaxSize()) {
                 Row(modifier = Modifier.fillMaxWidth().weight(if (showBottom) (100 - bottomShare).toFloat() else 1f)) {
                     if (rail != null) {
@@ -151,13 +152,13 @@ fun DockLayoutRenderer(
                         }
                     }
                     Row(modifier = Modifier.weight(if (showSidebar) (100 - sidebarShare).toFloat() else 1f).fillMaxHeight()) {
-                        Box(modifier = Modifier.weight(1f).fillMaxHeight()) { AlmadarNode(main, onEvent, Modifier.fillMaxSize()) }
+                        Box(modifier = Modifier.weight(if (showSecondary) (100 - secondaryShare).toFloat() else 1f).fillMaxHeight()) { AlmadarNode(main, onEvent, Modifier.fillMaxSize()) }
                         if (secondary != null) {
                             Column(modifier = Modifier.fillMaxHeight().background(palette.surface).padding(almadarSpaceFor("xs"))) {
                                 toggle(secondaryEvent, "panel-right-close", "panel-right-open", secondaryCollapsed) { secondaryLocal = it }
                             }
                             if (showSecondary) {
-                                Box(modifier = Modifier.width(props.int("secondarySidebarWidth", 280).dp).fillMaxHeight()) {
+                                Box(modifier = Modifier.weight(secondaryShare.toFloat()).widthIn(min = props.int("secondarySidebarMinSize", 240).dp).fillMaxHeight()) {
                                     AlmadarNode(secondary, onEvent, Modifier.fillMaxSize())
                                 }
                             }
