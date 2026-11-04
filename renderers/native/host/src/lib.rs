@@ -41,6 +41,15 @@ pub extern "system" fn Java_com_google_androidgamesdk_OrbitalTextInput_nativeIsE
 }
 
 #[no_mangle]
+pub extern "system" fn Java_com_google_androidgamesdk_OrbitalMotion_nativeSetReducedMotion(
+    _env: *mut std::ffi::c_void,
+    _class: *mut std::ffi::c_void,
+    reduced: u8,
+) {
+    orbital_client_dioxus::native::set_reduced_motion(reduced != 0);
+}
+
+#[no_mangle]
 pub fn android_main(app: android_activity::AndroidApp) {
     let _ = tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)

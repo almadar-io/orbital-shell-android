@@ -11,6 +11,7 @@ import android.view.inputmethod.EditorInfo;
 import com.google.androidgamesdk.GameActivity;
 import com.google.androidgamesdk.OrbitalTextInput;
 import com.google.androidgamesdk.OrbitalVideoInput;
+import com.google.androidgamesdk.OrbitalMotion;
 import com.google.androidgamesdk.gametextinput.InputConnection;
 
 public final class MainActivity extends GameActivity {
@@ -18,6 +19,12 @@ public final class MainActivity extends GameActivity {
 
     static {
         System.loadLibrary("orbital_android_native_gpu");
+    }
+
+    @Override
+    protected void onCreate(android.os.Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        OrbitalMotion.install(this);
     }
 
     @Override
@@ -39,6 +46,7 @@ public final class MainActivity extends GameActivity {
 
     @Override
     protected void onDestroy() {
+        OrbitalMotion.clear(this);
         OrbitalVideoInput.clear();
         super.onDestroy();
     }
@@ -52,6 +60,7 @@ public final class MainActivity extends GameActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        OrbitalMotion.refresh(this);
         OrbitalVideoInput.resume();
     }
 
