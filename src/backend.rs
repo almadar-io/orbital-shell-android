@@ -45,6 +45,7 @@ impl Backend for AndroidBackend {
             &module.distinct_entities(),
             &module.named_types,
         ));
+        files.push(generate_events_file(module));
         files.push(generate_services_file(&module.services));
         files.push(generate_api_client_file(module));
         files.push(generate_slot_role_file());
@@ -106,7 +107,7 @@ fn generate_entities_file(
     // shell's `emit_named_type_declarations`.
     let file_hoisted = std::cell::RefCell::new(Vec::new());
     for (name, ty) in named_types {
-        oir_type_to_kotlin_with(ty, name, &file_hoisted);
+        oir_type_to_kotlin_with(ty, &orbital_core_base::type_compat::type_identifier(name), &file_hoisted);
     }
     for decl in file_hoisted.into_inner() {
         content.push_str(&decl);
@@ -257,6 +258,87 @@ fn generate_entity(entity: &OirEntity) -> String {
 
     out.push_str(")\n\n");
     out
+}
+
+/// A payload field's entity reference to an entity this module does not declare reads as raw JSON, as in the
+/// TypeScript shell (an imported atom's entity has no class here).
+fn payload_type_local(ty: &OirType, local: &std::collections::BTreeSet<&str>) -> OirType {
+    match ty {
+        OirType::Row { entity } if !local.contains(entity.as_str()) => OirType::Node,
+        OirType::Array { inner } => OirType::Array {
+            inner: Box::new(payload_type_local(inner, local)),
+        },
+        OirType::Optional { inner } => OirType::Optional {
+            inner: Box::new(payload_type_local(inner, local)),
+        },
+        OirType::Map { key, value } => OirType::Map {
+            key: key.clone(),
+            value: Box::new(payload_type_local(value, local)),
+        },
+        other => other.clone(),
+    }
+}
+
+/// The payload classes of every event a trait declares or emits with a payload, named `<Trait><EVENT>Payload`
+/// as in the TypeScript shell, fields sorted by name.
+fn generate_events_file(module: &OirModule) -> GeneratedFile {
+    let mut content = String::from(
+        "package generated\n\nimport kotlinx.serialization.Serializable\nimport kotlinx.serialization.SerialName\n\n",
+    );
+    let local: std::collections::BTreeSet<&str> =
+        module.entities.iter().map(|e| e.name.as_str()).collect();
+    let mut payloads: std::collections::BTreeMap<String, Vec<(String, OirType)>> =
+        std::collections::BTreeMap::new();
+    for t in &module.traits {
+        for event in &t.events {
+            let Some(schema) = event.payload_schema.as_ref().filter(|s| !s.is_empty()) else {
+                continue;
+            };
+            let mut fields: Vec<(String, OirType)> = schema
+                .iter()
+                .map(|(k, v)| (k.clone(), payload_type_local(v, &local)))
+                .collect();
+            fields.sort_by(|a, b| a.0.cmp(&b.0));
+            payloads.insert(
+                format!(
+                    "{}{}Payload",
+                    sanitize_identifier(&t.name, &[]),
+                    sanitize_identifier(&event.key, &[])
+                ),
+                fields,
+            );
+        }
+    }
+    for (class_name, fields) in payloads {
+        let hoisted = std::cell::RefCell::new(Vec::new());
+        let mut fields_out = String::new();
+        for (name, ty) in &fields {
+            let (inner, optional) = ty.effective(true);
+            let kotlin_type = oir_type_to_kotlin_with(
+                inner,
+                &format!("{}{}", class_name, split_to_pascal_case(name)),
+                &hoisted,
+            );
+            fields_out.push_str(&format!(
+                "    @SerialName(\"{}\")\n    val {}: {}{},\n",
+                escape_double_quoted(name),
+                kotlin_identifier(&split_to_camel_case(name)),
+                kotlin_type,
+                if optional { "? = null" } else { "" }
+            ));
+        }
+        for decl in hoisted.into_inner() {
+            content.push_str(&decl);
+            content.push_str("\n\n");
+        }
+        content.push_str(&format!(
+            "@Serializable\ndata class {class_name}(\n{fields_out})\n\n"
+        ));
+    }
+    GeneratedFile {
+        path: "Events.kt".to_string(),
+        content,
+    }
 }
 
 fn oir_type_to_kotlin_with(
@@ -1227,7 +1309,7 @@ impl TargetTypeRenderer for KotlinRenderer<'_> {
         // `OirModule::named_types` (resolver-registered recursive aliases AND
         // Phase-3D nominalized anonymous shapes) — the field references it by
         // bare name, mirroring the TS shell (types.rs `type_ref`).
-        name.to_string()
+        orbital_core_base::type_compat::type_identifier(name)
     }
     fn row(&self, entity: &str) -> String {
         kotlin_entity_type(entity)
@@ -2010,6 +2092,34 @@ mod tests {
             .unwrap_or_default()
     }
 
+    fn holder_module(alias: &str) -> OirModule {
+        let mut module = OirModule::new("TestApp", "1.0.0");
+        module.named_types.insert(
+            alias.to_string(),
+            OirType::Struct { additional: None, fields: vec![OirField::new("id", OirType::String)].into() },
+        );
+        let mut holder = OirEntity::new("Holder");
+        holder.fields.push(OirField::new("claim", OirType::TypeRef { name: alias.to_string() }));
+        module.entities.push(holder);
+        module
+    }
+
+    #[test]
+    fn a_behavior_qualified_alias_is_one_identifier_at_declaration_and_reference() {
+        let content = entities_file(&holder_module("std-foo::Bar"));
+        assert!(content.contains("data class StdFooBar("), "{content}");
+        assert!(content.contains(": StdFooBar"), "{content}");
+        assert!(!content.contains("::"), "{content}");
+    }
+
+    #[test]
+    fn control_an_unqualified_alias_is_spelled_as_written() {
+        let content = entities_file(&holder_module("Bar"));
+        assert!(content.contains("data class Bar("), "{content}");
+        assert!(content.contains(": Bar"), "{content}");
+        assert!(!content.contains("StdFoo"), "{content}");
+    }
+
     #[test]
     fn test_entities_declared_once_when_module_carries_same_named_clones() {
         let mut module = OirModule::new("TestApp", "1.0.0");
@@ -2029,6 +2139,59 @@ mod tests {
         let content = entities_file(&module);
         assert_eq!(content.matches("data class User(").count(), 1);
         assert!(content.contains("data class UserProfile"));
+    }
+
+    fn payload_module() -> OirModule {
+        use orbital_core_base::ir::{OirEvent, OirTrait, OirTypeMap};
+        let mut module = OirModule::new("TestApp", "1.0.0");
+        let mut t = OirTrait::new("Chunk");
+        let mut listened = OirEvent::new("CHUNK");
+        let mut schema = OirTypeMap::new();
+        schema.insert("text".into(), OirType::String);
+        schema.insert("size".into(), OirType::Number);
+        schema.insert(
+            "note".into(),
+            OirType::Optional {
+                inner: Box::new(OirType::String),
+            },
+        );
+        listened.payload_schema = Some(schema);
+        let mut emitted = OirEvent::new("CHUNKED");
+        let mut schema = OirTypeMap::new();
+        schema.insert("count".into(), OirType::Integer);
+        emitted.payload_schema = Some(schema);
+        t.events = vec![listened, emitted, OirEvent::new("RESET")];
+        module.traits.push(t);
+        module
+    }
+
+    fn events_kt(module: &OirModule) -> String {
+        AndroidBackend::new()
+            .generate(module)
+            .files
+            .into_iter()
+            .find(|f| f.path == "Events.kt")
+            .map(|f| f.content)
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn events_file_declares_one_serializable_payload_per_event_with_sorted_fields() {
+        let content = events_kt(&payload_module());
+        assert!(content.starts_with("package generated\n"));
+        assert!(
+            content.contains("@Serializable\ndata class ChunkCHUNKPayload(\n    @SerialName(\"note\")\n    val note: String? = null,\n    @SerialName(\"size\")\n    val size: Double,\n    @SerialName(\"text\")\n    val text: String,\n)"),
+            "{content}"
+        );
+        assert!(content.contains(
+            "data class ChunkCHUNKEDPayload(\n    @SerialName(\"count\")\n    val count: Long,\n)"
+        ));
+    }
+
+    #[test]
+    fn control_a_void_event_and_a_traitless_module_declare_no_payload() {
+        assert!(!events_kt(&payload_module()).contains("RESET"));
+        assert!(!events_kt(&OirModule::new("TestApp", "1.0.0")).contains("data class"));
     }
 
     #[test]
