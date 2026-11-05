@@ -174,6 +174,20 @@ fn kotlin_entity_type(entity: &str) -> String {
     }
 }
 
+fn kotlin_enum_decl(enum_name: &str, values: &[String]) -> String {
+    let variants: Vec<String> = values
+        .iter()
+        .map(|v| {
+            format!(
+                "\n    @SerialName(\"{}\")\n    {}",
+                escape_double_quoted(v),
+                split_to_pascal_case(v)
+            )
+        })
+        .collect();
+    format!("@Serializable\nenum class {enum_name} {{{}\n}}\n\n", variants.join(","))
+}
+
 fn generate_entity(entity: &OirEntity) -> String {
     let mut out = String::new();
     let class_name = kotlin_entity_type(&entity.name);
@@ -183,20 +197,7 @@ fn generate_entity(entity: &OirEntity) -> String {
         if let Some(values) = &field.enum_values {
             if !values.is_empty() {
                 let enum_name = enum_class_name(&class_name, &field.name);
-                out.push_str("@Serializable\n");
-                out.push_str(&format!("enum class {} {{", enum_name));
-                let variants: Vec<String> = values
-                    .iter()
-                    .map(|v| {
-                        format!(
-                            "\n    @SerialName(\"{}\")\n    {}",
-                            escape_double_quoted(v),
-                            split_to_pascal_case(v)
-                        )
-                    })
-                    .collect();
-                out.push_str(&variants.join(","));
-                out.push_str("\n}\n\n");
+                out.push_str(&kotlin_enum_decl(&enum_name, values));
             }
         }
     }
@@ -325,6 +326,49 @@ fn generate_events_file(module: &OirModule) -> GeneratedFile {
                 kotlin_identifier(&split_to_camel_case(name)),
                 kotlin_type,
                 if optional { "? = null" } else { "" }
+            ));
+        }
+        for decl in hoisted.into_inner() {
+            content.push_str(&decl);
+            content.push_str("\n\n");
+        }
+        content.push_str(&format!(
+            "@Serializable\ndata class {class_name}(\n{fields_out})\n\n"
+        ));
+    }
+    for t in &module.traits {
+        let knobs = t.config_fields();
+        if knobs.is_empty() {
+            continue;
+        }
+        let class_name = format!("{}Config", sanitize_identifier(&t.name, &[]));
+        let hoisted = std::cell::RefCell::new(Vec::new());
+        let mut fields_out = String::new();
+        for knob in &knobs {
+            let name = &knob.name;
+            let context = format!("{}{}", class_name, split_to_pascal_case(name));
+            let ty = match knob.enum_values.as_ref().filter(|v| !v.is_empty()) {
+                Some(values) => {
+                    hoisted.borrow_mut().push(kotlin_enum_decl(&context, values).trim_end().to_string());
+                    OirType::Enum { name: context.clone() }
+                }
+                None => knob.field_type.clone(),
+            };
+            let (inner, optional) = ty.effective(true);
+            let kotlin_type = oir_type_to_kotlin_with(inner, &context, &hoisted);
+            let default = knob.default.as_ref().and_then(|v| match render_default(&KotlinLiteral, v, inner, None) {
+                Ok(rendered) => rendered,
+                Err(mismatch) => Some(mismatch.marker()),
+            });
+            let tail = match default {
+                Some(d) => format!("{}{} = {}", kotlin_type, if optional { "?" } else { "" }, d),
+                None => format!("{kotlin_type}? = null"),
+            };
+            fields_out.push_str(&format!(
+                "    @SerialName(\"{}\")\n    val {}: {},\n",
+                escape_double_quoted(name),
+                kotlin_identifier(&split_to_camel_case(name)),
+                tail
             ));
         }
         for decl in hoisted.into_inner() {
@@ -2186,6 +2230,34 @@ mod tests {
         assert!(content.contains(
             "data class ChunkCHUNKEDPayload(\n    @SerialName(\"count\")\n    val count: Long,\n)"
         ));
+    }
+
+    #[test]
+    fn a_trait_with_config_knobs_declares_one_serializable_config_with_defaults() {
+        use orbital_core_base::ir::OirTrait;
+        let mut module = OirModule::new("TestApp", "1.0.0");
+        let mut t = OirTrait::new("Game");
+        let knob = |ty| orbital_core_base::ir::OirConfigFieldType { field_type: ty, values: None };
+        let mut schema = orbital_core_base::ir::OirConfigSchema::new();
+        schema.insert("running".into(), knob(OirType::Boolean));
+        schema.insert("pointsPerKill".into(), knob(OirType::Number));
+        schema.insert("label".into(), knob(OirType::String));
+        t.declared_config_schema = Some(schema);
+        let mut defaults = orbital_core_base::ir::OirObject::new();
+        defaults.insert("running".into(), OirValue::Bool(true));
+        defaults.insert("pointsPerKill".into(), OirValue::Number(10.0));
+        t.declared_config_defaults = Some(defaults);
+        module.traits.push(t);
+        let content = events_kt(&module);
+        assert!(
+            content.contains("@Serializable\ndata class GameConfig(\n    @SerialName(\"label\")\n    val label: String? = null,\n    @SerialName(\"pointsPerKill\")\n    val pointsPerKill: Double = 10.0,\n    @SerialName(\"running\")\n    val running: Boolean = true,\n)"),
+            "{content}"
+        );
+    }
+
+    #[test]
+    fn control_a_trait_without_config_declares_no_config() {
+        assert!(!events_kt(&payload_module()).contains("ChunkConfig"));
     }
 
     #[test]
