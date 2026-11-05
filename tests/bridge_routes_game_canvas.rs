@@ -6,12 +6,12 @@
 //! Also exercises the headless RGBA path from orbital-canvas via the Rust
 //! c_api (no device/Vulkan needed on Linux CI — graceful skip when no adapter).
 
-use orbital_core_base::generate::Backend;
-use orbital_core_base::ir::OirModule;
 use orbital_canvas::{
     packet::{DrawCommand, GameRenderPacket, Rect},
     Canvas,
 };
+use orbital_core_base::generate::Backend;
+use orbital_core_base::ir::OirModule;
 use orbital_shell_android::AndroidBackend;
 
 /// All canvas-family pattern names that must be routed to the GPU renderer.
@@ -145,7 +145,9 @@ fn backend_emits_bridge_files() {
         "OrbitalGameBridge.kt must declare OrbitalGameSurfaceView"
     );
     assert!(
-        bridge.content.contains("System.loadLibrary(\"orbital_ffi\")"),
+        bridge
+            .content
+            .contains("System.loadLibrary(\"orbital_ffi\")"),
         "OrbitalGameBridge.kt must load the native library"
     );
 }
@@ -233,7 +235,10 @@ fn jni_symbols_follow_the_kotlin_package() {
         .trim();
     let prefix = format!("Java_{}_OrbitalGameBridge_", package.replace('.', "_"));
     for sym in orbital_ffi::jni_bridge::JNI_SYMBOLS {
-        assert!(sym.starts_with(&prefix), "{sym} does not start with {prefix} (Kotlin package {package})");
+        assert!(
+            sym.starts_with(&prefix),
+            "{sym} does not start with {prefix} (Kotlin package {package})"
+        );
     }
     // Control: a symbol under a different package would be caught.
     assert!(!"Java_generated_OrbitalGameBridge_nativeInit".starts_with(&prefix));
@@ -247,13 +252,33 @@ fn jni_symbols_follow_the_kotlin_package() {
 fn the_canvas_frame_loop_runs_only_for_an_animated_scene_on_the_host_clock() {
     let canvas = include_str!("../renderers/compose/renderers/bridge/OrbitalGameCanvas.kt");
     let bridge = include_str!("../renderers/compose/renderers/bridge/OrbitalGameBridge.kt");
-    let effect = canvas.split("LaunchedEffect(animating)").nth(1).expect("frame effect");
-    let guard = effect.find("if (!animating) return@LaunchedEffect").expect("no loop when static");
+    let effect = canvas
+        .split("LaunchedEffect(animating)")
+        .nth(1)
+        .expect("frame effect");
+    let guard = effect
+        .find("if (!animating) return@LaunchedEffect")
+        .expect("no loop when static");
     let frame = effect.find("withFrameNanos").expect("host frame clock");
     assert!(guard < frame, "the guard precedes the first frame request");
-    assert!(effect.contains("surfaceView.frame(nowMs)"), "each frame goes through the view");
-    assert!(canvas.contains("view.onWantsFrames = { animating = it }"), "the renderer decides whether a loop runs");
-    assert!(bridge.contains("nativeSetClock(rendererPtr, nowMs.toDouble())"), "the frame clock reaches the renderer");
-    assert!(bridge.contains("ANIMATOR_DURATION_SCALE"), "Remove animations maps to reduced motion");
-    assert!(bridge.contains("external fun nativeWantsFrames"), "the JNI declaration exists");
+    assert!(
+        effect.contains("surfaceView.frame(nowMs)"),
+        "each frame goes through the view"
+    );
+    assert!(
+        canvas.contains("view.onWantsFrames = { animating = it }"),
+        "the renderer decides whether a loop runs"
+    );
+    assert!(
+        bridge.contains("nativeSetClock(rendererPtr, nowMs.toDouble())"),
+        "the frame clock reaches the renderer"
+    );
+    assert!(
+        bridge.contains("ANIMATOR_DURATION_SCALE"),
+        "Remove animations maps to reduced motion"
+    );
+    assert!(
+        bridge.contains("external fun nativeWantsFrames"),
+        "the JNI declaration exists"
+    );
 }

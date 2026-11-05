@@ -9,7 +9,8 @@ use orbital_core_base::generate::Backend;
 use orbital_core_base::ir::OirModule;
 use orbital_shell_android::AndroidBackend;
 
-const KERNEL_BRIDGE_KT: &str = include_str!("../renderers/compose/renderers/bridge/OrbitalKernelBridge.kt");
+const KERNEL_BRIDGE_KT: &str =
+    include_str!("../renderers/compose/renderers/bridge/OrbitalKernelBridge.kt");
 
 #[test]
 fn kernel_bridge_declares_every_jni_symbol() {
@@ -52,7 +53,8 @@ fn backend_emits_kernel_bridge_file() {
     assert!(bridge.content.contains("class OrbitalKernel"));
 }
 
-const KERNEL_WIRE_KT: &str = include_str!("../renderers/compose/renderers/bridge/generated/KernelWire.kt");
+const KERNEL_WIRE_KT: &str =
+    include_str!("../renderers/compose/renderers/bridge/generated/KernelWire.kt");
 const VIEW_MODEL_KT: &str = include_str!("../hosts/OrbitalViewModel.kt.tpl");
 
 /// K5 (EXEC-DIST-7): the bridge decodes the response's `frames` delta, applies it at the version it starts from, asks
@@ -65,6 +67,15 @@ fn the_bridge_applies_frame_deltas_by_version_and_reads_no_response_entity_by_tr
     assert!(VIEW_MODEL_KT.contains("frameView.apply(delta) == KernelFrameApply.GAP"));
     assert!(VIEW_MODEL_KT.contains("resyncFrames"));
     assert!(!VIEW_MODEL_KT.contains("response.entityByTrait"));
-    let response_class = KERNEL_WIRE_KT.split("data class KernelEventResponse").nth(1).unwrap().split("data class KernelFiredTick").next().unwrap();
-    assert!(!response_class.contains("entityByTrait"), "the response keeps no entityByTrait");
+    let response_class = KERNEL_WIRE_KT
+        .split("data class KernelEventResponse")
+        .nth(1)
+        .unwrap()
+        .split("data class KernelFiredTick")
+        .next()
+        .unwrap();
+    assert!(
+        !response_class.contains("entityByTrait"),
+        "the response keeps no entityByTrait"
+    );
 }

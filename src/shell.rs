@@ -19,7 +19,10 @@ impl AndroidShell {
     /// Find the `android-shell` template directory at runtime.
     fn find_template_path() -> PathBuf {
         // The one template lookup (`ORBITAL_SHELLS_DIR` → beside the binary → the checkout).
-        orbital_core_base::renderer_packs::shell_template("android-shell", std::path::Path::new(env!("CARGO_MANIFEST_DIR")))
+        orbital_core_base::renderer_packs::shell_template(
+            "android-shell",
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+        )
     }
 
     /// Create with an explicit template path.
@@ -131,7 +134,7 @@ impl Shell for AndroidShell {
 
 /// Write `local.properties` with `sdk.dir` from `ANDROID_HOME`, falling back
 /// to `ANDROID_SDK_ROOT`; skipped silently when neither is set.
-fn write_local_properties(target_dir: &Path) -> Result<(), ShellError> {
+pub(crate) fn write_local_properties(target_dir: &Path) -> Result<(), ShellError> {
     let sdk_dir = match std::env::var("ANDROID_HOME").or_else(|_| std::env::var("ANDROID_SDK_ROOT"))
     {
         Ok(dir) => dir,
@@ -169,7 +172,7 @@ fn copy_native_lib(target_dir: &Path) -> Result<(), ShellError> {
     Ok(())
 }
 
-fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), ShellError> {
+pub(crate) fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), ShellError> {
     if !dst.exists() {
         std::fs::create_dir_all(dst)?;
     }
@@ -213,7 +216,7 @@ fn build_replacements(project_name: &str) -> std::collections::HashMap<&'static 
     map
 }
 
-fn replace_placeholders_in_dir(
+pub(crate) fn replace_placeholders_in_dir(
     dir: &Path,
     replacements: &std::collections::HashMap<&str, String>,
 ) -> Result<(), ShellError> {
@@ -228,7 +231,7 @@ fn replace_placeholders_in_dir(
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
         let is_text = matches!(
             ext,
-            "kt" | "kts" | "xml" | "properties" | "md" | "txt" | "gradle"
+            "kt" | "kts" | "java" | "xml" | "properties" | "md" | "txt" | "gradle"
         );
         if !is_text {
             continue;
@@ -244,7 +247,7 @@ fn replace_placeholders_in_dir(
     Ok(())
 }
 
-fn to_package_name(s: &str) -> String {
+pub(crate) fn to_package_name(s: &str) -> String {
     s.to_lowercase()
         .replace(['-', ' '], "_")
         .replace(|c: char| !c.is_alphanumeric() && c != '_', "")
@@ -515,5 +518,4 @@ mod tests {
             "one image loader (coil-compose) plus its SVG decoder, no second loader"
         );
     }
-
 }

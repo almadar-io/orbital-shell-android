@@ -3,6 +3,7 @@
 //! Emits a Jetpack Compose Gradle project from an `OirModule`.
 
 mod backend;
+mod native_gpu;
 mod pack;
 mod shell;
 pub mod shell_program;

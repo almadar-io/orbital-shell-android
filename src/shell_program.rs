@@ -2,35 +2,123 @@
 
 use orbital_core_base::project::write_project;
 use orbital_core_base::shell_protocol::{
-    description, written_files, GenerateRequest, GenerateResponse, ShellDescription, ShellFailure, ShellProgram,
-    CODE_BAD_REQUEST, CODE_GENERATE_FAILED,
+    description, written_files, GenerateRequest, GenerateResponse, ShellDescription, ShellFailure,
+    ShellOption, ShellProgram, CODE_BAD_REQUEST, CODE_GENERATE_FAILED,
 };
 use std::path::Path;
 
 pub struct AndroidProgram;
 
-fn resolved(request: &GenerateRequest) -> Result<orbital_core_base::schema::types::OrbitalSchema, ShellFailure> {
-    request
-        .resolved
-        .clone()
-        .ok_or_else(|| ShellFailure::new(CODE_BAD_REQUEST, "the android shell needs the resolved program"))
+fn resolved(
+    request: &GenerateRequest,
+) -> Result<orbital_core_base::schema::types::OrbitalSchema, ShellFailure> {
+    request.resolved.clone().ok_or_else(|| {
+        ShellFailure::new(
+            CODE_BAD_REQUEST,
+            "the android shell needs the resolved program",
+        )
+    })
 }
 
 impl ShellProgram for AndroidProgram {
     fn describe(&self) -> ShellDescription {
-        description("android", env!("CARGO_PKG_VERSION"), true, Vec::new())
+        description(
+            "android",
+            env!("CARGO_PKG_VERSION"),
+            true,
+            vec![
+                ShellOption {
+                    name: "renderer".into(),
+                    description: "Android renderer pack".into(),
+                    values: Some(vec!["compose".into(), "native-gpu".into()]),
+                    default: Some("compose".into()),
+                },
+                ShellOption {
+                    name: "backendUrl".into(),
+                    description: "Server URL for the native GPU renderer".into(),
+                    values: None,
+                    default: None,
+                },
+            ],
+        )
     }
 
-    fn generate(&self, request: &GenerateRequest, output: &Path) -> Result<GenerateResponse, ShellFailure> {
-        crate::require_renderer_pack().map_err(|e| ShellFailure::new(CODE_GENERATE_FAILED, format!("{}: {e}", e.code())))?;
+    fn generate(
+        &self,
+        request: &GenerateRequest,
+        output: &Path,
+    ) -> Result<GenerateResponse, ShellFailure> {
+        let renderer = match request.options.get("renderer") {
+            None => "compose",
+            Some(serde_json::Value::String(value))
+                if value == "compose" || value == "native-gpu" =>
+            {
+                value
+            }
+            _ => {
+                return Err(ShellFailure::new(
+                    CODE_BAD_REQUEST,
+                    "renderer must be compose or native-gpu",
+                ))
+            }
+        };
+        if renderer == "native-gpu" {
+            let schema = resolved(request)?;
+            let language =
+                orbital_core_base::language_data::language_bundle_json().map_err(|e| {
+                    ShellFailure::new(
+                        CODE_GENERATE_FAILED,
+                        format!("load installed language bundle: {e}"),
+                    )
+                })?;
+            let backend_url = match request.options.get("backendUrl") {
+                None => None,
+                Some(serde_json::Value::String(url))
+                    if url::Url::parse(url).is_ok_and(|parsed| {
+                        matches!(parsed.scheme(), "http" | "https") && parsed.host().is_some()
+                    }) => Some(url.as_str()),
+                _ => return Err(ShellFailure::new(CODE_BAD_REQUEST, "backendUrl must be an HTTP(S) URL")),
+            };
+            let backend =
+                crate::native_gpu::NativeGpuBackend::new(&schema, language, backend_url).map_err(|e| {
+                    ShellFailure::new(
+                        CODE_GENERATE_FAILED,
+                        format!("serialize resolved program: {e}"),
+                    )
+                })?;
+            let shell = crate::native_gpu::NativeGpuShell::new()
+                .map_err(|e| ShellFailure::new(CODE_GENERATE_FAILED, e.to_string()))?;
+            let generated =
+                write_project(&request.module, output, &shell, &backend, &request.write)?;
+            return Ok(GenerateResponse {
+                files: written_files(&generated),
+                warnings: generated.warnings,
+                next_steps: vec![
+                    format!("cd {}", output.display()),
+                    "./gradlew assembleDebug".into(),
+                ],
+            });
+        }
+        crate::require_renderer_pack()
+            .map_err(|e| ShellFailure::new(CODE_GENERATE_FAILED, format!("{}: {e}", e.code())))?;
         let backend = crate::AndroidBackend::new().with_resolved_schema(resolved(request)?);
-        let generated = write_project(&request.module, output, &crate::AndroidShell::new(), &backend, &request.write)?;
+        let generated = write_project(
+            &request.module,
+            output,
+            &crate::AndroidShell::new(),
+            &backend,
+            &request.write,
+        )?;
         let mut next_steps = Vec::new();
         if std::env::var("ANDROID_HOME").is_err() && std::env::var("ANDROID_SDK_ROOT").is_err() {
             next_steps.push("Neither ANDROID_HOME nor ANDROID_SDK_ROOT is set — local.properties was not written; set one before running ./gradlew".to_string());
         }
         next_steps.push(format!("cd {}", output.display()));
         next_steps.push("./gradlew assembleDebug".to_string());
-        Ok(GenerateResponse { files: written_files(&generated), warnings: generated.warnings, next_steps })
+        Ok(GenerateResponse {
+            files: written_files(&generated),
+            warnings: generated.warnings,
+            next_steps,
+        })
     }
 }

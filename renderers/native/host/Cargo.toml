@@ -1,0 +1,28 @@
+[package]
+name = "orbital-android-native-gpu"
+version = "18.0.0"
+edition = "2021"
+license = "BUSL-1.1"
+repository = "https://github.com/almadar-io/orbital-shell-android"
+description = "Android GameActivity host for the shared Orbital Dioxus renderer"
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+default = []
+native-a11y = ["orbital-client-dioxus/native-a11y"]
+native-audio = ["orbital-client-dioxus/native-audio"]
+research-audio = ["orbital-client-dioxus/research-audio"]
+research-drag = ["orbital-client-dioxus/research-drag"]
+research-dock = ["orbital-client-dioxus/research-dock"]
+research-video = ["orbital-client-dioxus/research-video"]
+
+[dependencies]
+orbital-client-dioxus = { git = "https://github.com/almadar-io/orbital-shell-rust", branch = "main", features = ["native", "native-http"] }
+orbital-core = { git = "https://github.com/almadar-io/orbital-core", branch = "main" }
+android-activity = { version = "0.6.0", features = ["game-activity"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
