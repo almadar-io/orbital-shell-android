@@ -214,7 +214,7 @@ fn generate_entity(entity: &OirEntity) -> String {
             &hoisted,
         );
         let default = field.default.as_ref().and_then(|v| {
-            match render_default(&KotlinLiteral, v, &type_hint, None) {
+            match render_default(&KotlinLiteral { union_name: &format!("{}{}", class_name, split_to_pascal_case(&field.name)) }, v, &type_hint, None) {
                 Ok(rendered) => rendered,
                 Err(mismatch) => Some(mismatch.marker()),
             }
@@ -356,7 +356,7 @@ fn generate_events_file(module: &OirModule) -> GeneratedFile {
             };
             let (inner, optional) = ty.effective(true);
             let kotlin_type = oir_type_to_kotlin_with(inner, &context, &hoisted);
-            let default = knob.default.as_ref().and_then(|v| match render_default(&KotlinLiteral, v, inner, None) {
+            let default = knob.default.as_ref().and_then(|v| match render_default(&KotlinLiteral { union_name: &context }, v, inner, None) {
                 Ok(rendered) => rendered,
                 Err(mismatch) => Some(mismatch.marker()),
             });
@@ -1399,11 +1399,10 @@ impl TargetTypeRenderer for KotlinRenderer<'_> {
             return self.json();
         }
         let name = self.context_name.clone();
-        // A real discriminated union: a sealed class whose @Serializable
-        // subtypes are tagged by @SerialName (kotlinx.serialization's
-        // discriminator). Each variant's struct fields render through a child
-        // renderer so nested shapes hoist under `{Name}{Variant}…`.
-        let subtypes: Vec<String> = variants
+        // A sealed class, untagged on the wire: a hand-written serializer
+        // tries each arm in declaration order. A struct arm is a @Serializable
+        // data class of its fields; any other arm wraps its own type in `value`.
+        let arms: Vec<(String, String, bool)> = variants
             .iter()
             .map(|v| {
                 let variant_name = format!("{}{}", name, split_to_pascal_case(&v.name));
@@ -1411,48 +1410,76 @@ impl TargetTypeRenderer for KotlinRenderer<'_> {
                     context_name: variant_name.clone(),
                     hoisted: self.hoisted,
                 };
-                let fields = match &v.field_type {
+                match &v.field_type {
                     OirType::Struct { fields, additional: _additional } => {
-                        fields.iter()
-                        .map(|f| {
-                            let grandchild = KotlinRenderer {
-                                context_name: format!(
-                                    "{}{}",
-                                    variant_name,
-                                    split_to_pascal_case(&f.name)
-                                ),
-                                hoisted: self.hoisted,
-                            };
-                            let (inner_ty, optional) = f.effective_type();
-                            let t = render_type(&grandchild, inner_ty, f.enum_values.as_deref());
-                            let opt = if optional { "?" } else { "" };
-                            format!(
-                                "val {}: {}{}",
-                                kotlin_identifier(&split_to_camel_case(&f.name)),
-                                t,
-                                opt
-                            )
-                        })
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                    },
-                    other => {
-                        format!("val value: {}", render_type(&child, other, None))
+                        let fields = fields
+                            .iter()
+                            .map(|f| {
+                                let grandchild = KotlinRenderer {
+                                    context_name: format!(
+                                        "{}{}",
+                                        variant_name,
+                                        split_to_pascal_case(&f.name)
+                                    ),
+                                    hoisted: self.hoisted,
+                                };
+                                let (inner_ty, optional) = f.effective_type();
+                                let t = render_type(&grandchild, inner_ty, f.enum_values.as_deref());
+                                let opt = if optional { "?" } else { "" };
+                                format!(
+                                    "val {}: {}{}",
+                                    kotlin_identifier(&split_to_camel_case(&f.name)),
+                                    t,
+                                    opt
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        let decl = format!(
+                            "    @Serializable\n    data class {variant_name}({fields}) : {name}()"
+                        );
+                        (decl, format!("{name}.{variant_name}"), true)
                     }
-                };
-                format!(
-                    "    @Serializable\n    @SerialName(\"{}\")\n    data class {}({}) : {}()",
-                    escape_double_quoted(&v.name),
-                    variant_name,
-                    fields,
-                    name
-                )
+                    other => {
+                        let ty = render_type(&child, other, None);
+                        let decl = format!(
+                            "    data class {variant_name}(val value: {ty}) : {name}()"
+                        );
+                        (decl, ty, false)
+                    }
+                }
+            })
+            .collect();
+        let decls: Vec<String> = arms.iter().map(|(d, _, _)| d.clone()).collect();
+        let decodes: Vec<String> = variants
+            .iter()
+            .zip(&arms)
+            .map(|(v, (_, ty, is_struct))| {
+                let variant_name = format!("{}{}", name, split_to_pascal_case(&v.name));
+                let value = format!(
+                    "json.decodeFromJsonElement(kotlinx.serialization.serializer<{ty}>(), element)"
+                );
+                let built = if *is_struct { value } else { format!("{name}.{variant_name}({value})") };
+                format!("        try {{ return {built} }} catch (e: kotlinx.serialization.SerializationException) {{}} catch (e: IllegalArgumentException) {{}}")
+            })
+            .collect();
+        let encodes: Vec<String> = variants
+            .iter()
+            .zip(&arms)
+            .map(|(v, (_, ty, is_struct))| {
+                let variant_name = format!("{}{}", name, split_to_pascal_case(&v.name));
+                if *is_struct {
+                    format!("            is {name}.{variant_name} -> json.encodeToJsonElement(kotlinx.serialization.serializer<{ty}>(), value)")
+                } else {
+                    format!("            is {name}.{variant_name} -> json.encodeToJsonElement(kotlinx.serialization.serializer<{ty}>(), value.value)")
+                }
             })
             .collect();
         self.hoisted.borrow_mut().push(format!(
-            "@Serializable\nsealed class {} {{\n{}\n}}",
-            name,
-            subtypes.join("\n")
+            "@Serializable(with = {name}Serializer::class)\nsealed class {name} {{\n{}\n}}\n\nobject {name}Serializer : kotlinx.serialization.KSerializer<{name}> {{\n    override val descriptor: kotlinx.serialization.descriptors.SerialDescriptor = kotlinx.serialization.json.JsonElement.serializer().descriptor\n\n    override fun deserialize(decoder: kotlinx.serialization.encoding.Decoder): {name} {{\n        val input = decoder as kotlinx.serialization.json.JsonDecoder\n        val json = input.json\n        val element = input.decodeJsonElement()\n{}\n        throw kotlinx.serialization.SerializationException(\"no {name} arm matches\")\n    }}\n\n    override fun serialize(encoder: kotlinx.serialization.encoding.Encoder, value: {name}) {{\n        val output = encoder as kotlinx.serialization.json.JsonEncoder\n        val json = output.json\n        output.encodeJsonElement(when (value) {{\n{}\n        }})\n    }}\n}}",
+            decls.join("\n"),
+            decodes.join("\n"),
+            encodes.join("\n")
         ));
         name
     }
@@ -1590,9 +1617,11 @@ pub fn classify_oir_type(type_: &OirType) -> TypeMappingClass {
 /// None` — no Kotlin literal syntax for an arbitrary object today, so no
 /// default is emitted rather than a fabricated `emptyMap()`/`{}` that would
 /// silently misrepresent the declared shape.
-struct KotlinLiteral;
+struct KotlinLiteral<'a> {
+    union_name: &'a str,
+}
 
-impl TargetLiteralRenderer for KotlinLiteral {
+impl TargetLiteralRenderer for KotlinLiteral<'_> {
     type Out = String;
 
     fn null(&self) -> String {
@@ -1627,6 +1656,9 @@ impl TargetLiteralRenderer for KotlinLiteral {
     }
     fn array(&self, items: Vec<String>) -> String {
         format!("listOf({})", items.join(", "))
+    }
+    fn union_arm(&self, arm: &str, inner: String) -> String {
+        format!("{0}.{0}{1}({inner})", self.union_name, split_to_pascal_case(arm))
     }
 }
 
@@ -3231,9 +3263,30 @@ mod tests {
         assert_eq!(
             hoisted,
             vec![
-                "@Serializable\nsealed class Ctx {\n    @Serializable\n    @SerialName(\"book\")\n    data class CtxBook(val kind: String) : Ctx()\n    @Serializable\n    @SerialName(\"movie\")\n    data class CtxMovie(val kind: String) : Ctx()\n}"
+                "@Serializable(with = CtxSerializer::class)\nsealed class Ctx {\n    @Serializable\n    data class CtxBook(val kind: String) : Ctx()\n    @Serializable\n    data class CtxMovie(val kind: String) : Ctx()\n}\n\nobject CtxSerializer : kotlinx.serialization.KSerializer<Ctx> {\n    override val descriptor: kotlinx.serialization.descriptors.SerialDescriptor = kotlinx.serialization.json.JsonElement.serializer().descriptor\n\n    override fun deserialize(decoder: kotlinx.serialization.encoding.Decoder): Ctx {\n        val input = decoder as kotlinx.serialization.json.JsonDecoder\n        val json = input.json\n        val element = input.decodeJsonElement()\n        try { return json.decodeFromJsonElement(kotlinx.serialization.serializer<Ctx.CtxBook>(), element) } catch (e: kotlinx.serialization.SerializationException) {} catch (e: IllegalArgumentException) {}\n        try { return json.decodeFromJsonElement(kotlinx.serialization.serializer<Ctx.CtxMovie>(), element) } catch (e: kotlinx.serialization.SerializationException) {} catch (e: IllegalArgumentException) {}\n        throw kotlinx.serialization.SerializationException(\"no Ctx arm matches\")\n    }\n\n    override fun serialize(encoder: kotlinx.serialization.encoding.Encoder, value: Ctx) {\n        val output = encoder as kotlinx.serialization.json.JsonEncoder\n        val json = output.json\n        output.encodeJsonElement(when (value) {\n            is Ctx.CtxBook -> json.encodeToJsonElement(kotlinx.serialization.serializer<Ctx.CtxBook>(), value)\n            is Ctx.CtxMovie -> json.encodeToJsonElement(kotlinx.serialization.serializer<Ctx.CtxMovie>(), value)\n        })\n    }\n}"
             ]
         );
+    }
+
+    #[test]
+    fn a_union_decodes_a_bare_primitive_arm_and_constructs_its_default() {
+        let env = OirType::Struct {
+            additional: None,
+            fields: vec![OirField::new("anchor", OirType::String)].into(),
+        };
+        let union_ty = OirType::Union {
+            variants: vec![OirField::new("string", OirType::String), OirField::new("Env", env)].into(),
+        };
+        let (ty, hoisted) = oir_type_to_kotlin_hoisted(&union_ty, "HolderHost");
+        assert_eq!(ty, "HolderHost");
+        assert_eq!(hoisted, vec!["@Serializable(with = HolderHostSerializer::class)\nsealed class HolderHost {\n    data class HolderHostString(val value: String) : HolderHost()\n    @Serializable\n    data class HolderHostEnv(val anchor: String) : HolderHost()\n}\n\nobject HolderHostSerializer : kotlinx.serialization.KSerializer<HolderHost> {\n    override val descriptor: kotlinx.serialization.descriptors.SerialDescriptor = kotlinx.serialization.json.JsonElement.serializer().descriptor\n\n    override fun deserialize(decoder: kotlinx.serialization.encoding.Decoder): HolderHost {\n        val input = decoder as kotlinx.serialization.json.JsonDecoder\n        val json = input.json\n        val element = input.decodeJsonElement()\n        try { return HolderHost.HolderHostString(json.decodeFromJsonElement(kotlinx.serialization.serializer<String>(), element)) } catch (e: kotlinx.serialization.SerializationException) {} catch (e: IllegalArgumentException) {}\n        try { return json.decodeFromJsonElement(kotlinx.serialization.serializer<HolderHost.HolderHostEnv>(), element) } catch (e: kotlinx.serialization.SerializationException) {} catch (e: IllegalArgumentException) {}\n        throw kotlinx.serialization.SerializationException(\"no HolderHost arm matches\")\n    }\n\n    override fun serialize(encoder: kotlinx.serialization.encoding.Encoder, value: HolderHost) {\n        val output = encoder as kotlinx.serialization.json.JsonEncoder\n        val json = output.json\n        output.encodeJsonElement(when (value) {\n            is HolderHost.HolderHostString -> json.encodeToJsonElement(kotlinx.serialization.serializer<String>(), value.value)\n            is HolderHost.HolderHostEnv -> json.encodeToJsonElement(kotlinx.serialization.serializer<HolderHost.HolderHostEnv>(), value)\n        })\n    }\n}"]);
+        let default = render_default(
+            &KotlinLiteral { union_name: "HolderHost" },
+            &orbital_core_base::ir::OirValue::String("api.example.test".into()),
+            &union_ty,
+            None,
+        );
+        assert_eq!(default, Ok(Some("HolderHost.HolderHostString(\"api.example.test\")".to_string())));
     }
 
     // -----------------------------------------------------------------------
