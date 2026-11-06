@@ -1340,7 +1340,15 @@ impl TargetTypeRenderer for KotlinRenderer<'_> {
         "kotlinx.serialization.json.JsonElement".to_string()
     }
     fn enum_ty(&self, name: &str, _enum_values: Option<&[String]>) -> String {
-        split_to_pascal_case(name)
+        let Some(members) = orbital_core_base::type_compat::literal_union_members(name) else {
+            return split_to_pascal_case(name);
+        };
+        let decl = kotlin_enum_decl(&self.context_name, &members).trim_end().to_string();
+        let mut hoisted = self.hoisted.borrow_mut();
+        if !hoisted.contains(&decl) {
+            hoisted.push(decl);
+        }
+        self.context_name.clone()
     }
     fn trait_ref(&self) -> String {
         "String".to_string()
@@ -4385,5 +4393,20 @@ mod tests {
         let content = events_kt(&module);
         assert!(content.contains("    val size: Double? = null,"), "{content}");
         assert!(content.contains("    val text: String,"), "control: a `!` key stays required: {content}");
+    }
+
+    #[test]
+    fn a_literal_union_payload_field_hoists_a_context_named_enum_not_the_literal_text() {
+        let mut module = payload_module();
+        module.traits[0].events[0]
+            .payload_schema
+            .as_mut()
+            .expect("CHUNK payload")
+            .insert("kind".into(), OirType::Enum { name: "\"a\" | \"b\"".into() });
+        module.traits[0].events[0].payload_required_fields.insert("kind".into());
+        let content = events_kt(&module);
+        assert!(content.contains("enum class ChunkCHUNKPayloadKind {"), "{content}");
+        assert!(content.contains("    val kind: ChunkCHUNKPayloadKind,\n"), "{content}");
+        assert!(!content.contains("\"a\" | \"b\""), "the literal text is never a type: {content}");
     }
 }
