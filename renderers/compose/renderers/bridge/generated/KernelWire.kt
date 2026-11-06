@@ -141,7 +141,8 @@ data class KernelEventRequest(
     val mount: List<KernelMountSeed>? = null,
     val route: String? = null,
     val residence: KernelLegResidence? = null,
-    val framesSince: Long? = null
+    val framesSince: Long? = null,
+    val heldPayload: Long? = null
 )
 
 @Serializable
