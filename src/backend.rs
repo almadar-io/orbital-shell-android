@@ -7,8 +7,8 @@ use orbital_core_base::ir::{
 };
 use orbital_core_base::schema::{OrbitalSchema, ServiceDefinition};
 use orbital_core_base::str_utils::{
-    escape_double_quoted, sanitize_identifier, split_to_camel_case, split_to_pascal_case,
-    to_title_case,
+    escape_double_quoted, literal_member_identifier, sanitize_identifier, split_to_camel_case,
+    split_to_pascal_case, to_title_case,
 };
 
 /// Android code generation backend.
@@ -107,7 +107,11 @@ fn generate_entities_file(
     // shell's `emit_named_type_declarations`.
     let file_hoisted = std::cell::RefCell::new(Vec::new());
     for (name, ty) in named_types {
-        oir_type_to_kotlin_with(ty, &orbital_core_base::type_compat::type_identifier(name), &file_hoisted);
+        let ident = orbital_core_base::type_compat::type_identifier(name);
+        let rendered = oir_type_to_kotlin_with(ty, &ident, &file_hoisted);
+        if rendered != ident {
+            file_hoisted.borrow_mut().push(format!("typealias {ident} = {rendered}"));
+        }
     }
     for decl in file_hoisted.into_inner() {
         content.push_str(&decl);
@@ -174,6 +178,10 @@ fn kotlin_entity_type(entity: &str) -> String {
     }
 }
 
+fn kotlin_enum_member(member: &str) -> String {
+    literal_member_identifier(member, split_to_pascal_case)
+}
+
 fn kotlin_enum_decl(enum_name: &str, values: &[String]) -> String {
     let variants: Vec<String> = values
         .iter()
@@ -181,7 +189,7 @@ fn kotlin_enum_decl(enum_name: &str, values: &[String]) -> String {
             format!(
                 "\n    @SerialName(\"{}\")\n    {}",
                 escape_double_quoted(v),
-                split_to_pascal_case(v)
+                kotlin_enum_member(v)
             )
         })
         .collect();
@@ -1410,10 +1418,6 @@ impl TargetTypeRenderer for KotlinRenderer<'_> {
             .iter()
             .map(|v| {
                 let variant_name = format!("{}{}", name, split_to_pascal_case(&v.name));
-                let child = KotlinRenderer {
-                    context_name: variant_name.clone(),
-                    hoisted: self.hoisted,
-                };
                 match &v.field_type {
                     OirType::Struct { fields, additional: _additional } => {
                         let fields = fields
@@ -1445,7 +1449,11 @@ impl TargetTypeRenderer for KotlinRenderer<'_> {
                         (decl, format!("{name}.{variant_name}"), true)
                     }
                     other => {
-                        let ty = render_type(&child, other, None);
+                        let value_context = KotlinRenderer {
+                            context_name: format!("{variant_name}Value"),
+                            hoisted: self.hoisted,
+                        };
+                        let ty = render_type(&value_context, other, None);
                         let decl = format!(
                             "    data class {variant_name}(val value: {ty}) : {name}()"
                         );
@@ -1667,10 +1675,18 @@ impl TargetLiteralRenderer for KotlinLiteral<'_> {
     /// pieces); only `member` needs the same transform `generate_entity`
     /// applies to each variant name.
     fn enum_member(&self, enum_name: &str, member: &str) -> String {
-        format!("{}.{}", enum_name, split_to_pascal_case(member))
+        let enum_name = match orbital_core_base::type_compat::literal_union_members(enum_name) {
+            Some(_) => self.union_name,
+            None => enum_name,
+        };
+        format!("{}.{}", enum_name, kotlin_enum_member(member))
     }
     fn array(&self, items: Vec<String>) -> String {
         format!("listOf({})", items.join(", "))
+    }
+    fn map(&self, entries: Vec<(String, String)>) -> Option<String> {
+        let pairs: Vec<String> = entries.into_iter().map(|(k, v)| format!("{} to {v}", self.string(&k))).collect();
+        Some(format!("mapOf({})", pairs.join(", ")))
     }
     fn union_arm(&self, arm: &str, inner: String) -> String {
         format!("{0}.{0}{1}({inner})", self.union_name, split_to_pascal_case(arm))
@@ -1941,18 +1957,6 @@ mod tests {
     }
 
     #[test]
-    fn a_text_default_of_a_node_field_is_a_json_primitive() {
-        use orbital_core_base::ir::OirValue;
-        let text = OirValue::String("Ticket details".into());
-        assert_eq!(
-            render_default(&KotlinLiteral { union_name: "Ctx" }, &text, &OirType::Node, None),
-            Ok(Some("kotlinx.serialization.json.JsonPrimitive(\"Ticket details\")".to_string()))
-        );
-        assert_eq!(render_default(&KotlinLiteral { union_name: "Ctx" }, &text, &OirType::String, None), Ok(Some("\"Ticket details\"".to_string())), "control: a string field keeps its plain string literal");
-        assert!(render_default(&KotlinLiteral { union_name: "Ctx" }, &OirValue::Number(1.0), &OirType::Node, None).is_err(), "control: a number is not a text node");
-    }
-
-    #[test]
     fn the_toast_slot_renders_its_pattern_and_the_modal_window_exposes_its_tags() {
         let app = generate_app_file(&awaiting_module()).content;
         let toast = &app[app.find("// Toast notification.").unwrap()..];
@@ -2215,6 +2219,39 @@ mod tests {
         holder.fields.push(OirField::new("claim", OirType::TypeRef { name: alias.to_string() }));
         module.entities.push(holder);
         module
+    }
+
+    #[test]
+    fn a_union_arm_wrapping_a_hoisted_union_does_not_shadow_it_with_the_arm_class() {
+        let inner = OirType::Union {
+            variants: vec![OirField::new("string", OirType::String), OirField::new("number", OirType::Number)].into(),
+        };
+        let outer = OirType::Union {
+            variants: vec![
+                OirField::new("string", OirType::String),
+                OirField::new("map", OirType::map(OirType::String, OirType::optional(inner))),
+            ]
+            .into(),
+        };
+        let mut module = OirModule::new("TestApp", "1.0.0");
+        module.named_types.insert("Cell".to_string(), outer);
+        let content = entities_file(&module);
+        assert!(content.contains("data class CellMap(val value: Map<String, CellMapValue?>) : Cell()"), "{content}");
+        assert!(content.contains("sealed class CellMapValue {"), "{content}");
+        assert!(content.contains("data class CellString(val value: String) : Cell()"), "control: a scalar arm is unchanged: {content}");
+    }
+
+    #[test]
+    fn a_named_map_alias_is_declared_as_a_typealias() {
+        let mut module = OirModule::new("TestApp", "1.0.0");
+        module.named_types.insert(
+            "std-store::Row".to_string(),
+            OirType::Map { key: Box::new(OirType::String), value: Box::new(OirType::String) },
+        );
+        let content = entities_file(&module);
+        assert!(content.contains("typealias StdStoreRow = Map<String, String>"), "{content}");
+        let control = entities_file(&holder_module("std-foo::Bar"));
+        assert!(!control.contains("typealias StdFooBar"), "control: a struct is declared, not aliased: {control}");
     }
 
     #[test]
@@ -4505,5 +4542,55 @@ mod tests {
         assert!(content.contains("enum class ChunkCHUNKPayloadKind {"), "{content}");
         assert!(content.contains("    val kind: ChunkCHUNKPayloadKind,\n"), "{content}");
         assert!(!content.contains("\"a\" | \"b\""), "the literal text is never a type: {content}");
+    }
+
+    #[test]
+    fn an_operator_or_dotted_literal_member_is_a_distinct_legal_kotlin_identifier() {
+        let values: Vec<String> = ["==", "!=", "127.0.0.1", "inProgress"].iter().map(|v| v.to_string()).collect();
+        let decl = kotlin_enum_decl("Op", &values);
+        for member in ["__3d__3d_", "__21__3d_", "_127_2e_0_2e_0_2e_1", "InProgress"] {
+            assert!(decl.contains(&format!("\n    {member}")), "{decl}");
+        }
+        assert!(decl.contains("@SerialName(\"==\")"), "the wire value stays the literal: {decl}");
+        assert_eq!(
+            KotlinLiteral { union_name: "Op" }.enum_member("Op", "!="),
+            "Op.__21__3d_",
+            "a reference spells the member the declaration does"
+        );
+    }
+
+    #[test]
+    fn a_text_default_of_a_node_field_is_a_json_primitive() {
+        use orbital_core_base::ir::OirValue;
+        let text = OirValue::String("Ticket details".into());
+        assert_eq!(
+            render_default(&KotlinLiteral { union_name: "Ctx" }, &text, &OirType::Node, None),
+            Ok(Some("kotlinx.serialization.json.JsonPrimitive(\"Ticket details\")".to_string()))
+        );
+        assert_eq!(render_default(&KotlinLiteral { union_name: "Ctx" }, &text, &OirType::String, None), Ok(Some("\"Ticket details\"".to_string())), "control: a string field keeps its plain string literal");
+        assert!(render_default(&KotlinLiteral { union_name: "Ctx" }, &OirValue::Number(1.0), &OirType::Node, None).is_err(), "control: a number is not a text node");
+    }
+
+    #[test]
+    fn a_map_default_renders_as_a_kotlin_map_of() {
+        use orbital_core_base::ir::{render_default, OirType, OirValue};
+        let lit = KotlinLiteral { union_name: "Ctx" };
+        let ty = OirType::Map { key: Box::new(OirType::String), value: Box::new(OirType::Array { inner: Box::new(OirType::Number) }) };
+        assert_eq!(render_default(&lit, &OirValue::Object(Default::default()), &ty, None), Ok(Some("mapOf()".to_string())));
+        let mut fields = orbital_core_base::ir::types::OirObject::default();
+        fields.insert("open".to_string(), OirValue::Array(vec![OirValue::Number(1.0)]));
+        assert_eq!(render_default(&lit, &OirValue::Object(fields), &ty, None), Ok(Some("mapOf(\"open\" to listOf(1.0))".to_string())));
+        let st = OirType::Struct { additional: None, fields: vec![orbital_core_base::ir::OirField::new("id", OirType::String)].into() };
+        assert_eq!(render_default(&lit, &OirValue::Object(Default::default()), &st, None), Ok(None), "control: a struct default still declines");
+    }
+
+    #[test]
+    fn a_list_of_literal_union_members_names_the_hoisted_context_enum() {
+        let ty = OirType::Array { inner: Box::new(OirType::Enum { name: "\"text\" | \"list\"".into() }) };
+        let value = OirValue::Array(vec![OirValue::String("text".into()), OirValue::String("list".into())]);
+        let rendered = render_default(&KotlinLiteral { union_name: "IndexConfigPartKinds" }, &value, &ty, None);
+        assert_eq!(rendered.unwrap().unwrap(), "listOf(IndexConfigPartKinds.Text, IndexConfigPartKinds.List)");
+        let named = render_default(&KotlinLiteral { union_name: "Ctx" }, &OirValue::String("on".into()), &OirType::Enum { name: "Mode".into() }, None);
+        assert_eq!(named.unwrap().unwrap(), "Mode.On", "control: a named enum keeps its own name");
     }
 }

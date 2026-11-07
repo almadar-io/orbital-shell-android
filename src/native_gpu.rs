@@ -3,8 +3,6 @@ use orbital_core_base::ir::OirModule;
 use orbital_core_base::schema::OrbitalSchema;
 use orbital_core_base::shell::{Shell, ShellError};
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
-use std::io::Read;
 use std::path::{Path, PathBuf};
 
 #[derive(Deserialize)]
@@ -21,16 +19,6 @@ struct NativeGpuContract {
 fn native_gpu_contract() -> NativeGpuContract {
     serde_json::from_str(include_str!("../renderers/native/contract.json"))
         .expect("the bundled native GPU contract must be valid")
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct NativeGpuManifest {
-    contract_version: u32,
-    abi: String,
-    shell_version: String,
-    feature_set: String,
-    sha256: String,
 }
 
 pub struct NativeGpuShell {
@@ -85,51 +73,19 @@ impl NativeGpuShell {
         } else {
             &contract.production_feature_set
         };
-        let manifest_path = self.bundle.join("manifest.json");
-        let manifest: NativeGpuManifest =
-            serde_json::from_slice(&std::fs::read(&manifest_path)?)
-                .map_err(|e| ShellError::Template(format!("{}: {e}", manifest_path.display())))?;
-        if manifest.contract_version != contract.contract_version
-            || manifest.abi != contract.abi
-            || manifest.shell_version != env!("CARGO_PKG_VERSION")
-            || manifest.feature_set != feature_set.as_str()
-        {
-            return Err(ShellError::Template(format!(
-                "{}: expected native GPU contract {}, ABI {}, shell {}, feature set {}",
-                manifest_path.display(),
-                contract.contract_version,
-                contract.abi,
-                env!("CARGO_PKG_VERSION"),
-                feature_set
-            )));
-        }
-        let library = self.bundle.join(&contract.abi).join(&contract.library);
-        let mut file = std::fs::File::open(&library)?;
-        let mut elf = [0u8; 20];
-        file.read_exact(&mut elf)?;
-        if &elf[..6] != b"\x7fELF\x02\x01" || u16::from_le_bytes([elf[18], elf[19]]) != 183 {
-            return Err(ShellError::Template(format!(
-                "{}: expected an Android arm64 ELF library",
-                library.display()
-            )));
-        }
-        let mut digest = Sha256::new();
-        digest.update(elf);
-        let mut chunk = [0u8; 65536];
-        loop {
-            let size = file.read(&mut chunk)?;
-            if size == 0 {
-                break;
-            }
-            digest.update(&chunk[..size]);
-        }
-        if format!("{:x}", digest.finalize()) != manifest.sha256 {
-            return Err(ShellError::Template(format!(
-                "{}: SHA-256 does not match manifest",
-                library.display()
-            )));
-        }
-        Ok(library)
+        let expected = orbital_core_base::native_bundle::NativeBundleExpectation {
+            contract_version: contract.contract_version,
+            shell_version: env!("CARGO_PKG_VERSION"),
+            feature_set,
+            library: &contract.library,
+            targets: &[contract.abi.as_str()],
+        };
+        let arm64_elf = |h: &[u8]| {
+            h.len() >= 20 && &h[..6] == b"\x7fELF\x02\x01" && u16::from_le_bytes([h[18], h[19]]) == 183
+        };
+        let mut libraries = orbital_core_base::native_bundle::verified_libraries(&self.bundle, &expected, arm64_elf)
+            .map_err(|e| ShellError::Template(e.to_string()))?;
+        Ok(libraries.remove(0).1)
     }
 }
 
@@ -280,10 +236,12 @@ mod tests {
         std::fs::write(lib_dir.join(&contract.library), &library).unwrap();
         let manifest = serde_json::json!({
             "contractVersion": contract.contract_version,
-            "abi": contract.abi,
             "shellVersion": env!("CARGO_PKG_VERSION"),
             "featureSet": contract.production_feature_set,
-            "sha256": format!("{:x}", Sha256::digest(&library)),
+            "libraries": serde_json::Map::from_iter([(
+                contract.abi.clone(),
+                serde_json::json!(orbital_core_base::native_bundle::file_sha256(&lib_dir.join(&contract.library)).unwrap()),
+            )]),
         });
         std::fs::write(
             package.join("native-gpu/android/manifest.json"),

@@ -20,35 +20,34 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.longOrNull
 import kotlin.math.min
-import kotlin.random.Random
 
+/** A sound std-audio-cue resolved; the host plays it as given. */
 private data class Sound(
-    val paths: List<String>, val volume: Float, val loop: Boolean,
-    val poolSize: Int, val crossfadeMs: Long
+    val key: String, val source: String, val volume: Float, val loop: Boolean,
+    val poolSize: Int, val fadeMs: Long
 )
 
-private object OrbitalAudioPolicy {
-    init { System.loadLibrary("orbital_ffi") }
-    external fun plan(previous: String?, next: String): String
-    external fun unlock(next: String): String
+private fun JsonElement?.sound(): Sound? {
+    val plan = this as? JsonObject ?: return null
+    fun text(name: String) = (plan[name] as? JsonPrimitive)?.contentOrNull
+    val sound = Sound(
+        text("key") ?: return invalidPlan(plan),
+        text("source") ?: return invalidPlan(plan),
+        text("volume")?.toFloatOrNull() ?: return invalidPlan(plan),
+        (plan["loop"] as? JsonPrimitive)?.booleanOrNull ?: return invalidPlan(plan),
+        (plan["poolSize"] as? JsonPrimitive)?.intOrNull ?: return invalidPlan(plan),
+        text("fadeMs")?.toDoubleOrNull()?.toLong() ?: return invalidPlan(plan)
+    )
+    return sound
 }
 
-private fun JsonObject.sound(): Sound? {
-    val paths = (this["sources"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull } ?: emptyList()
-    if (paths.isEmpty()) return null
-    return Sound(
-        paths,
-        (this["volume"] as? JsonPrimitive)?.contentOrNull?.toFloatOrNull() ?: 1f,
-        (this["looping"] as? JsonPrimitive)?.booleanOrNull ?: false,
-        ((this["poolSize"] as? JsonPrimitive)?.intOrNull ?: 1).coerceAtLeast(1),
-        ((this["crossfadeMs"] as? JsonPrimitive)?.longOrNull ?: 1500L).coerceAtLeast(0)
-    )
+private fun invalidPlan(plan: JsonObject): Sound? {
+    Log.e("OrbitalAudio", "Invalid game-audio-cue plan: $plan")
+    return null
 }
 
 private class AudioDriver(private val context: Context) {
@@ -62,7 +61,9 @@ private class AudioDriver(private val context: Context) {
     private var musicKey = ""
     private var fade: Runnable? = null
     private var fadeOutgoing: Voice? = null
-    private var priorFrame: String? = null
+    private var synced = false
+    private var priorCueSeq: Double? = null
+    private var priorMusic: Sound? = null
     private var unlocked = false
     private var paused = false
     private var muted = false
@@ -70,35 +71,23 @@ private class AudioDriver(private val context: Context) {
 
     fun sync(props: JsonElement) {
         muted = props.bool("muted")
-        volume = props.float("volume", 1f).coerceIn(0f, 1f)
-        val next = props.toString()
-        if (execute(OrbitalAudioPolicy.plan(priorFrame, next))) {
-            priorFrame = next
-            if (!unlocked && !muted && execute(OrbitalAudioPolicy.unlock(next))) unlocked = true
+        volume = props.float("volume", 1f)
+        val obj = props as? JsonObject
+        val cueSeq = (obj?.get("cueSeq") as? JsonPrimitive)?.contentOrNull?.toDoubleOrNull()
+        val music = obj?.get("musicPlay").sound()
+        if ((!synced || music != priorMusic) && music != null) changeMusic(music)
+        val before = priorCueSeq
+        if (synced && before != null && cueSeq != null && before != cueSeq) {
+            obj?.get("cuePlay").sound()?.takeIf { it.key.isNotEmpty() }?.let(::play)
+        }
+        synced = true
+        priorCueSeq = cueSeq
+        priorMusic = music
+        if (!unlocked && !muted) {
+            (obj?.get("autostart") as? JsonArray)?.forEach { item -> item.sound()?.let(::play) }
+            unlocked = true
         }
         applyVolumes()
-    }
-
-    private fun execute(response: String): Boolean {
-        val result = try { Json.parseToJsonElement(response) as? JsonObject } catch (error: Exception) {
-            Log.e("OrbitalAudio", "Invalid audio plan", error)
-            null
-        } ?: return false
-        result["error"]?.let {
-            Log.e("OrbitalAudio", "Audio policy: $it")
-            return false
-        }
-        for (item in result["actions"] as? JsonArray ?: emptyList()) {
-            val action = item as? JsonObject ?: continue
-            val key = (action["key"] as? JsonPrimitive)?.contentOrNull ?: ""
-            when ((action["kind"] as? JsonPrimitive)?.contentOrNull) {
-                "playCue" -> action.sound()?.let { play(key, it) }
-                "changeMusic" -> changeMusic(key, action.sound())
-                "stopMusic" -> changeMusic("", null)
-                "setMuted", "setVolume" -> applyVolumes()
-            }
-        }
-        return true
     }
 
     private fun level(sound: Sound): Float = if (muted || paused) 0f else min(1f, sound.volume * volume)
@@ -134,14 +123,15 @@ private class AudioDriver(private val context: Context) {
         }
     }
 
-    private fun play(key: String, sound: Sound) {
+    private fun play(sound: Sound) {
+        val key = sound.key
         if (muted) return
         val pool = effects.getOrPut(key) { mutableListOf() }
         if (pool.size >= sound.poolSize) {
             if (sound.loop) return
             pool.removeAt(0).player.release()
         }
-        val voice = voice(key, sound, sound.paths.random(Random)) ?: return
+        val voice = voice(key, sound, sound.source) ?: return
         voice.player.setVolume(level(sound), level(sound))
         voice.player.setOnCompletionListener {
             pool.remove(voice)
@@ -150,7 +140,8 @@ private class AudioDriver(private val context: Context) {
         pool.add(voice)
     }
 
-    private fun changeMusic(key: String, sound: Sound?) {
+    private fun changeMusic(sound: Sound) {
+        val key = sound.key
         fade?.let(handler::removeCallbacks)
         fade = null
         fadeOutgoing?.player?.release()
@@ -158,17 +149,17 @@ private class AudioDriver(private val context: Context) {
         val outgoing = music
         music = null
         musicKey = key
-        if (key.isEmpty() || sound == null) {
-            outgoing?.player?.release()
+        if (key.isEmpty()) {
+            fadeOut(outgoing, sound.fadeMs)
             return
         }
-        val incoming = voice(key, sound, sound.paths.first()) ?: run {
+        val incoming = voice(key, sound, sound.source) ?: run {
             outgoing?.player?.release()
             return
         }
         incoming.player.isLooping = true
         music = incoming
-        if (outgoing == null || sound.crossfadeMs == 0L) {
+        if (outgoing == null || sound.fadeMs == 0L) {
             outgoing?.player?.release()
             incoming.player.setVolume(level(sound), level(sound))
             return
@@ -179,7 +170,7 @@ private class AudioDriver(private val context: Context) {
         val oldLevel = level(outgoing.sound)
         val task = object : Runnable {
             override fun run() {
-                val progress = ((SystemClock.uptimeMillis() - began).toFloat() / sound.crossfadeMs).coerceIn(0f, 1f)
+                val progress = ((SystemClock.uptimeMillis() - began).toFloat() / sound.fadeMs).coerceIn(0f, 1f)
                 incoming.player.setVolume(level(sound) * progress, level(sound) * progress)
                 outgoing.player.setVolume(oldLevel * (1f - progress), oldLevel * (1f - progress))
                 if (progress < 1f && !paused) handler.postDelayed(this, 50)
@@ -191,6 +182,24 @@ private class AudioDriver(private val context: Context) {
             began = SystemClock.uptimeMillis()
             handler.post(task)
         }
+    }
+
+    private fun fadeOut(outgoing: Voice?, fadeMs: Long) {
+        if (outgoing == null) return
+        if (fadeMs == 0L || paused) { outgoing.player.release(); return }
+        fadeOutgoing = outgoing
+        val began = SystemClock.uptimeMillis()
+        val oldLevel = level(outgoing.sound)
+        val task = object : Runnable {
+            override fun run() {
+                val progress = ((SystemClock.uptimeMillis() - began).toFloat() / fadeMs).coerceIn(0f, 1f)
+                outgoing.player.setVolume(oldLevel * (1f - progress), oldLevel * (1f - progress))
+                if (progress < 1f && !paused) handler.postDelayed(this, 50)
+                else { outgoing.player.release(); fadeOutgoing = null; fade = null }
+            }
+        }
+        fade = task
+        handler.post(task)
     }
 
     private fun applyVolumes() {
