@@ -61,18 +61,14 @@ pub fn android_main(app: android_activity::AndroidApp) {
     let host: NativeHost = serde_json::from_str(&read_asset(&app, "native-host.json"))
         .expect("native-host.json contract");
     orbital_client_dioxus::native::set_android_app(app);
+    let css = orbital_client_dioxus::styles::program_stylesheets(
+        &orbital_core::schema::parse_schema(&schema).expect("bundled program.orb"),
+    );
     match host {
-        NativeHost::Embedded => orbital_client_dioxus::native::start(
-            &schema,
-            orbital_client_dioxus::styles::stylesheets(),
-            "Native App",
-        ),
-        NativeHost::Server { backend_url } => orbital_client_dioxus::native::start_server(
-            &schema,
-            &backend_url,
-            orbital_client_dioxus::styles::stylesheets(),
-            "Native App",
-        ),
+        NativeHost::Embedded => orbital_client_dioxus::native::start(&schema, css, "Native App"),
+        NativeHost::Server { backend_url } => {
+            orbital_client_dioxus::native::start_server(&schema, &backend_url, css, "Native App")
+        }
     }
     .expect("native GPU mount");
 }
