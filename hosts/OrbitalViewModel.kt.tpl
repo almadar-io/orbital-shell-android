@@ -328,14 +328,19 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
 
     init {{
         viewModelScope.launch(Dispatchers.IO) {{
-            val schemaJson = runCatching {{
-                getApplication<Application>().assets.open(RESOLVED_SCHEMA_ASSET)
-                    .bufferedReader().use {{ it.readText() }}
+            // The program can be tens of MB: it is streamed to a file the native kernel reads, never held as a JVM string.
+            val schemaFile = runCatching {{
+                val app = getApplication<Application>()
+                val target = java.io.File(app.noBackupFilesDir, RESOLVED_SCHEMA_ASSET)
+                app.assets.open(RESOLVED_SCHEMA_ASSET).use {{ input ->
+                    target.outputStream().use {{ output -> input.copyTo(output) }}
+                }}
+                target
             }}.getOrElse {{ e ->
                 android.util.Log.e("Orbital", "failed to read $RESOLVED_SCHEMA_ASSET", e)
                 return@launch
             }}
-            val created = OrbitalKernel.create(schemaJson, clientId)
+            val created = OrbitalKernel.createFromFile(schemaFile.absolutePath, clientId)
             if (created == null) {{
                 android.util.Log.e("Orbital", "kernel init failed from $RESOLVED_SCHEMA_ASSET")
                 return@launch

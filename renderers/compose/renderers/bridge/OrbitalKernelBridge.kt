@@ -39,6 +39,7 @@ object OrbitalKernelBridge {
 
     /** Create a kernel handle from an ALREADY-RESOLVED schema JSON; 0 on failure. */
     external fun nativeInit(resolvedSchemaJson: String, clientId: String): Long
+    external fun nativeInitFromFile(path: String, clientId: String): Long
 
     /** Destroy a handle previously created with [nativeInit]. */
     external fun nativeDestroy(handle: Long)
@@ -221,6 +222,12 @@ class OrbitalKernel private constructor(private val handle: Long) {
          */
         fun create(resolvedSchemaJson: String, clientId: String): OrbitalKernel? {
             val handle = OrbitalKernelBridge.nativeInit(resolvedSchemaJson, clientId)
+            return if (handle == 0L) null else OrbitalKernel(handle)
+        }
+
+        /** [create] with the resolved schema read natively from [path], so the program never becomes a JVM string. */
+        fun createFromFile(path: String, clientId: String): OrbitalKernel? {
+            val handle = OrbitalKernelBridge.nativeInitFromFile(path, clientId)
             return if (handle == 0L) null else OrbitalKernel(handle)
         }
     }

@@ -1299,7 +1299,7 @@ class GeneratedActivity : ComponentActivity() {
 /// device) under `app/src/main/assets/`, where `AssetManager` reads it at
 /// runtime.
 fn generate_resolved_schema_file(schema: &OrbitalSchema) -> GeneratedFile {
-    let content = orbital_core_eval::util::canonical_json::to_canonical_string_pretty(schema)
+    let content = orbital_core_eval::util::canonical_json::to_canonical_string(schema)
         .unwrap_or_else(|e| format!("{{\"error\": \"failed to serialize resolved schema: {e}\"}}"));
     GeneratedFile {
         path: "app/src/main/assets/resolved_schema.json".to_string(),
@@ -2661,9 +2661,10 @@ mod tests {
         let content = generate_view_model_file(&module).content;
         assert!(content.contains("viewModelScope.launch(Dispatchers.IO) {"));
         assert!(
-            content.contains(r#"getApplication<Application>().assets.open(RESOLVED_SCHEMA_ASSET)"#)
+            content.contains(r#"app.assets.open(RESOLVED_SCHEMA_ASSET).use"#)
         );
-        assert!(content.contains("val created = OrbitalKernel.create(schemaJson, clientId)"));
+        assert!(content.contains("val created = OrbitalKernel.createFromFile(schemaFile.absolutePath, clientId)"));
+        assert!(!content.contains("readText()"), "the program is never read into a JVM string");
         assert!(content.contains("private val clientId = UUID.randomUUID().toString()"));
         assert!(content.contains("withContext(Dispatchers.Main) {"));
     }
