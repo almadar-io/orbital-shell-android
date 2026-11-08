@@ -60,7 +60,7 @@ fun DataGridRenderer(
         }
         LazyVerticalGrid(
             columns = if (columnCount > 0) GridCells.Fixed(columnCount) else GridCells.Adaptive(props.int("minCardWidth", 280).dp),
-            modifier = Modifier.fillMaxWidth().almadarFlexFill(),
+            modifier = Modifier.almadarPageBounded().fillMaxWidth().almadarFlexFill(),
             horizontalArrangement = Arrangement.spacedBy(gap),
             verticalArrangement = Arrangement.spacedBy(gap)
         ) {

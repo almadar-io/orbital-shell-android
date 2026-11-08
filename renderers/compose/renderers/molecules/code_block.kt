@@ -170,7 +170,7 @@ internal fun AlmadarCodeBlock(props: JsonElement, modifier: Modifier, onEvent: (
                     val shown = diffLines?.map { Triple(it.content, it.type, it.after ?: it.before) }
                         ?: code.split("\n").mapIndexed { index, line -> Triple(line, "plain", index + 1) }
                     Column(
-                        modifier = Modifier.fillMaxWidth().heightIn(max = limit).verticalScroll(rememberScrollState())
+                        modifier = Modifier.fillMaxWidth().heightIn(max = limit).almadarPageBounded().verticalScroll(rememberScrollState())
                             .let { if (wrapped) it else it.horizontalScroll(rememberScrollState()) }
                             .padding(vertical = almadarSpaceFor("sm"))
                     ) {
@@ -471,7 +471,7 @@ internal fun AlmadarCodeBuffer(props: JsonElement, limit: androidx.compose.ui.un
                 }
             }
     ) {
-        LazyColumn(state = listState, modifier = Modifier.fillMaxWidth().horizontalScroll(hScroll).padding(vertical = almadarSpaceFor("sm"))) {
+        LazyColumn(state = listState, modifier = Modifier.almadarPageBounded().fillMaxWidth().horizontalScroll(hScroll).padding(vertical = almadarSpaceFor("sm"))) {
             items(count = lines.size) { row ->
                 val paints = bufferLinePaint(lines[row], row, cursor, caret, selection, decorations)
                 val cells = bufferCells(lines[row]) + " "

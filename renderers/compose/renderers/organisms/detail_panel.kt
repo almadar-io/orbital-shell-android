@@ -54,7 +54,7 @@ fun DetailPanelRenderer(
     } else {
         val panel: @Composable (Modifier) -> Unit = { panelModifier ->
         LazyColumn(
-            modifier = panelModifier,
+            modifier = panelModifier.almadarPageBounded(),
             contentPadding = PaddingValues(LocalAlmadarDensity.current.dialogPadding),
             verticalArrangement = Arrangement.spacedBy(almadarSpaceFor("md"))
         ) {

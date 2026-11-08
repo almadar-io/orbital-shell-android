@@ -85,7 +85,7 @@ fun AuthLayoutRenderer(
                 }
             }
             Box(
-                modifier = Modifier.weight(1f).fillMaxHeight().background(palette.background).verticalScroll(rememberScrollState()).padding(almadarSpaceFor(if (wide) "2xl" else "lg")),
+                modifier = Modifier.weight(1f).fillMaxHeight().background(palette.background).almadarPageBounded().verticalScroll(rememberScrollState()).padding(almadarSpaceFor(if (wide) "2xl" else "lg")),
                 contentAlignment = Alignment.Center
             ) {
                 Column(modifier = Modifier.widthIn(max = AlmadarSizes.maxWMd).fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {

@@ -35,7 +35,7 @@ fun AgentActivityFeedRenderer(
             modifier, onEvent
         )
     } else {
-        LazyColumn(state = listState, modifier = modifier.fillMaxWidth().almadarFlexFill(), verticalArrangement = Arrangement.spacedBy(almadarSpaceFor("sm"))) {
+        LazyColumn(state = listState, modifier = modifier.almadarPageBounded().fillMaxWidth().almadarFlexFill(), verticalArrangement = Arrangement.spacedBy(almadarSpaceFor("sm"))) {
             items(activities.size) { index ->
                 AgentActivityRowRenderer(
                     almadarJson("activity" to activities[index], "facts" to almadarJson("settled" to facts[index].first, "readyCount" to facts[index].second)),

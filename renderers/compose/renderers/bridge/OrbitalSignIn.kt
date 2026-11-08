@@ -156,7 +156,7 @@ fun OrbitalSignInScreen(viewModel: OrbitalViewModel) {
     }
 
     Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+        modifier = Modifier.fillMaxSize().almadarPageBounded().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text("Sign in", color = theme.foreground, modifier = Modifier.testTag(SignInIds.TITLE))

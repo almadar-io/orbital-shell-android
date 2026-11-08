@@ -65,7 +65,7 @@ fun DrawerRenderer(
                         AlmadarDivider()
                     }
                     Column(
-                        modifier = Modifier.fillMaxWidth().heightIn(max = LocalConfiguration.current.screenHeightDp.dp).verticalScroll(rememberScrollState()).padding(almadarSpaceFor("lg")),
+                        modifier = Modifier.fillMaxWidth().heightIn(max = LocalConfiguration.current.screenHeightDp.dp).almadarPageBounded().verticalScroll(rememberScrollState()).padding(almadarSpaceFor("lg")),
                         verticalArrangement = Arrangement.spacedBy(almadarSpaceFor("sm"))
                     ) {
                         props.children().forEach { RenderChild(it, Modifier.fillMaxWidth(), onEvent) }

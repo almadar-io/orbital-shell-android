@@ -63,7 +63,7 @@ private fun BranchingGraph(questions: List<JsonObject>, rules: List<JsonObject>,
     val width = GRAPH_NODE_WIDTH + GRAPH_PADDING * 2f + GRAPH_LABEL_ROOM
     val height = GRAPH_PADDING * 2f + nodes.size * (GRAPH_NODE_HEIGHT + GRAPH_GAP_Y)
     val mono = LocalAlmadarTheme.current.typeScale.monoFamily
-    Box(modifier = modifier.horizontalScroll(rememberScrollState()).verticalScroll(rememberScrollState())) {
+    Box(modifier = modifier.horizontalScroll(rememberScrollState()).almadarPageBounded().verticalScroll(rememberScrollState())) {
         androidx.compose.foundation.Canvas(modifier = Modifier.size(width.dp, height.dp)) {
             val pxPerDp = this.density
             withTransform({ scale(pxPerDp, pxPerDp, androidx.compose.ui.geometry.Offset.Zero) }) {

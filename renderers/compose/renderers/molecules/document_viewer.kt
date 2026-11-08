@@ -121,12 +121,12 @@ fun DocumentViewerRenderer(
                     AlmadarLocalButton(props, "Open document", { uriHandler.openUri(src) }, variant = "secondary", icon = "external-link")
                 }
             } else if (kind == "markdown") {
-                Column(modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(almadarSpaceFor("md"))) {
+                Column(modifier = Modifier.fillMaxWidth().almadarPageBounded().verticalScroll(rememberScrollState()).padding(almadarSpaceFor("md"))) {
                     MarkdownContentRenderer(almadarJson("content" to content, "sourceTrait" to almadarTrait(props)), Modifier.fillMaxWidth(), onEvent)
                 }
             } else {
                 val shown = if (kind == "html") android.text.Html.fromHtml(content, android.text.Html.FROM_HTML_MODE_LEGACY).toString() else content
-                Column(modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(almadarSpaceFor("md"))) {
+                Column(modifier = Modifier.fillMaxWidth().almadarPageBounded().verticalScroll(rememberScrollState()).padding(almadarSpaceFor("md"))) {
                     AlmadarMonoText(shown, size = if (factor > 1.5f) "lg" else if (factor > 1f) "base" else if (factor < 1f) "xs" else "sm")
                 }
             }

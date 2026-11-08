@@ -923,6 +923,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.wrapContentSize
@@ -965,6 +966,7 @@ import generated.patterns.core.AlmadarTheme
 import generated.patterns.core.AlmadarThemeModeControl
 import generated.patterns.core.LocalAlmadarCanvasTheme
 import generated.patterns.core.LocalAlmadarResolvedMotion
+import generated.patterns.core.LocalAlmadarPageHeight
 import generated.patterns.core.AlmadarEnterTiming
 import generated.patterns.core.almadarSlotEnter
 import generated.patterns.core.almadarSurfaceEnter
@@ -1272,6 +1274,21 @@ private fun slotEnterKey(trait: String, content: JsonElement): String =
 
 @Composable
 private fun PageBody(
+    traitName: String,
+    mainContents: List<Pair<String, JsonElement>>,
+    viewModel: OrbitalViewModel
+) {{
+    androidx.compose.foundation.layout.BoxWithConstraints(modifier = Modifier.fillMaxSize()) {{
+        CompositionLocalProvider(LocalAlmadarPageHeight provides maxHeight) {{
+            androidx.compose.foundation.layout.Column(modifier = Modifier.fillMaxWidth().verticalScroll(androidx.compose.foundation.rememberScrollState())) {{
+                PageSlots(traitName, mainContents, viewModel)
+            }}
+        }}
+    }}
+}}
+
+@Composable
+private fun PageSlots(
     traitName: String,
     mainContents: List<Pair<String, JsonElement>>,
     viewModel: OrbitalViewModel

@@ -59,7 +59,7 @@ fun CommandPaletteRenderer(
                 if (filtered.isEmpty()) {
                     AlmadarText(props.string("emptyLabel", "No matching commands"), Modifier.fillMaxWidth().padding(vertical = almadarSpaceFor("lg")), color = "muted", align = "center")
                 } else {
-                    Column(modifier = Modifier.fillMaxWidth().heightIn(max = AlmadarSizes.w80).verticalScroll(rememberScrollState())) {
+                    Column(modifier = Modifier.fillMaxWidth().heightIn(max = AlmadarSizes.w80).almadarPageBounded().verticalScroll(rememberScrollState())) {
                         filtered.groupBy { it.string("group") }.forEach { (group, items) ->
                             if (group.isNotEmpty()) {
                                 AlmadarText(group, Modifier.padding(horizontal = almadarSpaceFor("sm")).padding(top = almadarSpaceFor("xs")), variant = "caption", color = "muted")

@@ -114,7 +114,7 @@ fun DockLayoutRenderer(
                                 AlmadarLocalButton(props, "", { drawer = "" }, variant = "ghost", icon = "x", size = "sm", ariaLabel = "Close")
                             }
                             AlmadarDivider()
-                            Box(modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())) {
+                            Box(modifier = Modifier.weight(1f).fillMaxWidth().almadarPageBounded().verticalScroll(rememberScrollState())) {
                                 when (drawer) {
                                     "left" -> if (leftView == "menu" && rail != null) AlmadarNode(rail, onEvent) else AlmadarNode(sidebar, onEvent)
                                     "secondary" -> AlmadarNode(secondary, onEvent)
@@ -137,7 +137,7 @@ fun DockLayoutRenderer(
                     if (rail != null) {
                         val railWidth = props.int("railWidth", 0)
                         Box(
-                            modifier = (if (railWidth > 0) Modifier.width(railWidth.dp) else Modifier).fillMaxHeight().verticalScroll(rememberScrollState())
+                            modifier = (if (railWidth > 0) Modifier.width(railWidth.dp) else Modifier).fillMaxHeight().almadarPageBounded().verticalScroll(rememberScrollState())
                         ) { AlmadarNode(rail, onEvent) }
                         AlmadarDivider(vertical = true)
                     }

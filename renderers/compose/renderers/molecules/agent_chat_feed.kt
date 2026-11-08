@@ -70,7 +70,7 @@ fun AgentChatFeedRenderer(
     } else {
         LazyColumn(
             state = listState,
-            modifier = modifier.fillMaxWidth().padding(almadarSpaceFor("sm")).verificationContainer(idPrefix + "-scroller").almadarFlexFill(),
+            modifier = modifier.almadarPageBounded().fillMaxWidth().padding(almadarSpaceFor("sm")).verificationContainer(idPrefix + "-scroller").almadarFlexFill(),
             verticalArrangement = Arrangement.spacedBy(almadarSpaceFor("sm"))
         ) {
             items(turns.size) { index ->

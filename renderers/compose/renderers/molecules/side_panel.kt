@@ -36,7 +36,7 @@ fun SidePanelRenderer(
                 }
                 AlmadarDivider()
                 Column(
-                    modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(almadarSpaceFor("md")),
+                    modifier = Modifier.fillMaxWidth().almadarPageBounded().verticalScroll(rememberScrollState()).padding(almadarSpaceFor("md")),
                     verticalArrangement = Arrangement.spacedBy(almadarSpaceFor("sm"))
                 ) {
                     props.children().forEach { RenderChild(it, Modifier.fillMaxWidth(), onEvent) }

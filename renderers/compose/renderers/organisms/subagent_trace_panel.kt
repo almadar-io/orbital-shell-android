@@ -182,7 +182,7 @@ private fun traceToolCallItems(calls: List<JsonElement>, prefix: String): JsonAr
 private fun TraceScroll(cap: Dp, count: Int, autoScroll: Boolean = true, content: @Composable ColumnScope.() -> Unit) {
     val state = rememberScrollState()
     LaunchedEffect(count, state.maxValue) { if (autoScroll) state.scrollTo(state.maxValue) }
-    Column(modifier = Modifier.fillMaxWidth().heightIn(max = cap).verticalScroll(state), content = content)
+    Column(modifier = Modifier.fillMaxWidth().heightIn(max = cap).almadarPageBounded().verticalScroll(state), content = content)
 }
 
 @Composable
@@ -571,7 +571,7 @@ fun SubagentTracePanelRenderer(
                 if (entries.isEmpty()) {
                     Centered("No agent activity yet", "body2")
                 } else {
-                    LazyColumn(Modifier.weight(1f).almadarFlexFill()) {
+                    LazyColumn(Modifier.weight(1f).almadarPageBounded().almadarFlexFill()) {
                         itemsIndexed(entries) { index, entry ->
                             val icon = traceIcon(entry)
                             val stamp = traceTimeOf(entry)
@@ -631,7 +631,7 @@ fun SubagentTracePanelRenderer(
                     .almadarMaterialFill(shape, palette.card)
                     .clip(shape)
                     .then(almadarBorder(AlmadarCorner.Container, geometry.borderStandard, palette.border))
-                    .verticalScroll(rememberScrollState())
+                    .almadarPageBounded().verticalScroll(rememberScrollState())
             ) {
                 if (shown.isEmpty() && !hasCoordinator) {
                     Header { AlmadarText("Subagents", variant = "caption", weight = "semibold") }

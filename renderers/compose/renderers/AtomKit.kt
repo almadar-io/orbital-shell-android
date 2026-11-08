@@ -1109,6 +1109,16 @@ internal val LocalAlmadarBackdrop = compositionLocalOf<AlmadarBackdropState?> { 
 
 internal val LocalAlmadarGameOverlay = staticCompositionLocalOf { false }
 
+/** The page viewport's height while a page scrolls like the web document; unbounded outside a page. */
+val LocalAlmadarPageHeight = compositionLocalOf { Dp.Infinity }
+
+/** A scrolling child of a scrolling page stops at the viewport's height and scrolls itself, like a web list with `max-h-screen`. */
+@Composable
+internal fun Modifier.almadarPageBounded(): Modifier {
+    val page = LocalAlmadarPageHeight.current
+    return if (page == Dp.Infinity) this else this.heightIn(max = page)
+}
+
 /** The web `backdrop-filter` source: wraps the whole page, records it once into a GraphicsLayer when a material is mounted, then draws it normally so materials blur the recording behind themselves. */
 @Composable
 internal fun AlmadarBackdropHost(content: @Composable () -> Unit) {
@@ -1521,7 +1531,7 @@ internal fun AlmadarModalFrame(
                 AlmadarDivider()
             }
             Column(
-                modifier = Modifier.fillMaxWidth().heightIn(max = (screen * 0.8f).dp).verticalScroll(rememberScrollState()).padding(almadarSpaceFor("lg")),
+                modifier = Modifier.fillMaxWidth().heightIn(max = (screen * 0.8f).dp).almadarPageBounded().verticalScroll(rememberScrollState()).padding(almadarSpaceFor("lg")),
                 verticalArrangement = Arrangement.spacedBy(almadarSpaceFor("sm"))
             ) {
                 content()

@@ -107,7 +107,7 @@ fun VersionDiffRenderer(
         }
     }
     val column: @Composable (String, Modifier) -> Unit = { side, columnModifier ->
-        Column(modifier = columnModifier.verticalScroll(rememberScrollState()).horizontalScroll(rememberScrollState())) {
+        Column(modifier = columnModifier.almadarPageBounded().verticalScroll(rememberScrollState()).horizontalScroll(rememberScrollState())) {
             shown.forEach { row ->
                 if (row.kind == "header") {
                     AlmadarMonoText(

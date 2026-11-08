@@ -44,7 +44,7 @@ fun RuntimeDebuggerRenderer(
         if (!collapsed) {
             AlmadarDivider()
             Column(
-                modifier = Modifier.fillMaxWidth().heightIn(max = AlmadarSizes.maxWXl).verticalScroll(rememberScrollState()).padding(almadarSpaceFor("md")),
+                modifier = Modifier.fillMaxWidth().heightIn(max = AlmadarSizes.maxWXl).almadarPageBounded().verticalScroll(rememberScrollState()).padding(almadarSpaceFor("md")),
                 verticalArrangement = Arrangement.spacedBy(almadarSpaceFor("xs"))
             ) {
                 if (orbitals.isEmpty()) {

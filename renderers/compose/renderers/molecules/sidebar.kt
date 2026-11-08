@@ -72,7 +72,7 @@ fun SidebarRenderer(
             }
             AlmadarDivider()
             Column(
-                modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(almadarSpaceFor("sm")),
+                modifier = Modifier.weight(1f).almadarPageBounded().verticalScroll(rememberScrollState()).padding(almadarSpaceFor("sm")),
                 verticalArrangement = Arrangement.spacedBy(almadarSpaceFor("xs"))
             ) {
                 items.forEach { item ->

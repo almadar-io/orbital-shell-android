@@ -41,7 +41,7 @@ fun GenericAppTemplateRenderer(
         }
         AlmadarDivider()
         Column(
-            modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(almadarSpaceFor("lg"))
+            modifier = Modifier.weight(1f).fillMaxWidth().almadarPageBounded().verticalScroll(rememberScrollState()).padding(almadarSpaceFor("lg"))
         ) {
             props.children().forEach { RenderChild(it, Modifier.fillMaxWidth(), onEvent) }
         }
