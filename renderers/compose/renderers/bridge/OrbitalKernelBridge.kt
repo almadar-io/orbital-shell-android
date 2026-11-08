@@ -40,6 +40,8 @@ object OrbitalKernelBridge {
     /** Create a kernel handle from an ALREADY-RESOLVED schema JSON; 0 on failure. */
     external fun nativeInit(resolvedSchemaJson: String, clientId: String): Long
     external fun nativeInitFromFile(path: String, clientId: String): Long
+    external fun nativeInitError(): String
+    external fun nativeInstallLanguage(bundle: String): String?
 
     /** Destroy a handle previously created with [nativeInit]. */
     external fun nativeDestroy(handle: Long)
@@ -230,6 +232,13 @@ class OrbitalKernel private constructor(private val handle: Long) {
             val handle = OrbitalKernelBridge.nativeInitFromFile(path, clientId)
             return if (handle == 0L) null else OrbitalKernel(handle)
         }
+
+        /** Why the last [create]/[createFromFile] returned `null`. */
+        val initError: String
+            get() = OrbitalKernelBridge.nativeInitError()
+
+        /** Install the app's bundled language data before [createFromFile]; `null` on success, else why not. */
+        fun installLanguage(bundle: String): String? = OrbitalKernelBridge.nativeInstallLanguage(bundle)
     }
 
     /** The native side's own last error, read right after a `null`/decode-failure return. */

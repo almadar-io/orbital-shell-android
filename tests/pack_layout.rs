@@ -59,6 +59,7 @@ fn the_pack_ships_the_bridge_sources() {
         );
     }
     assert!(pack.source("bridge/tests/OrbitalAuthTest.kt").is_some());
+    assert!(pack.source("bridge/tests/CodeBlockBufferTest.kt").is_some());
 }
 
 #[test]
@@ -89,4 +90,8 @@ fn the_bridge_tests_go_to_the_test_source_set_only() {
         .files
         .iter()
         .any(|f| f.path == "app/src/test/kotlin/generated/patterns/core/OrbitalAuthTest.kt"));
+    assert!(output
+        .files
+        .iter()
+        .any(|f| f.path == "app/src/test/kotlin/generated/patterns/core/CodeBlockBufferTest.kt"));
 }

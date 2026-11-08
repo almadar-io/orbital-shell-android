@@ -64,6 +64,21 @@ fun HeaderRenderer(
                     horizontalArrangement = Arrangement.spacedBy(almadarSpaceFor("md")),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    if (props.bool("showMenuToggle", true)) {
+                        val menuEvent = props.string("onMenuToggle")
+                        val open = props.bool("isMenuOpen")
+                        Box(
+                            modifier = Modifier
+                                .size(LocalAlmadarDensity.current.buttonHeightMd)
+                                .then(if (menuEvent.isEmpty()) Modifier else Modifier.clickable(role = Role.Button) {
+                                    onEvent(menuEvent, eventEnvelope(props))
+                                }.almadarActionTag(menuEvent, props))
+                                .almadarLabel(if (open) "Close menu" else "Open menu"),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            AlmadarIcon(name = if (open) "x" else "menu", tint = palette.foreground, modifier = Modifier.size(LocalAlmadarIconography.current.defaultSize * 1.5f))
+                        }
+                    }
                     Row(
                         modifier = Modifier
                             .then(if (brandHref.isEmpty()) Modifier else Modifier.clickable(role = Role.Button) {
@@ -91,7 +106,11 @@ fun HeaderRenderer(
                         }
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(almadarSpaceFor("md")), verticalAlignment = Alignment.CenterVertically) {
-                        if (actionsNode != null && actionsNode !is JsonNull) AlmadarNode(actionsNode, onEvent)
+                        when (actionsNode) {
+                            null, is JsonNull -> Unit
+                            is JsonArray -> actionsNode.forEach { AlmadarNode(it, onEvent) }
+                            else -> AlmadarNode(actionsNode, onEvent)
+                        }
                         if (avatar != null || userName.isNotEmpty()) {
                             AvatarRenderer(
                                 almadarJson(

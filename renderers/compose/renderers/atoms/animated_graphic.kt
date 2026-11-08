@@ -24,7 +24,11 @@ fun AnimatedGraphicRenderer(
 ) {
     val palette = LocalAlmadarTheme.current.color
     val alt = props.string("alt", props.string("aria-label"))
-    val source = props.assetUrl("src")
+    val svgMarkup = props.string("svgContent")
+    // Inline markup paints through the shared loader as an SVG data source; its theme `var(--color-*)` resolve first.
+    val source = if (svgMarkup.isNotEmpty()) {
+        "data:$ALMADAR_SVG_MIME;utf8," + android.net.Uri.encode(almadarResolveSvgColorVars(svgMarkup, palette))
+    } else props.assetUrl("src")
     val placeholder: @Composable () -> Unit = {
         AlmadarIcon(name = "image", tint = palette.mutedForeground, modifier = Modifier.size(LocalAlmadarIconography.current.defaultSize * 2f))
     }

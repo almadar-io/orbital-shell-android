@@ -340,9 +340,19 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
                 android.util.Log.e("Orbital", "failed to read $RESOLVED_SCHEMA_ASSET", e)
                 return@launch
             }}
+            val language = runCatching {{
+                getApplication<Application>().assets.open(LANGUAGE_ASSET).bufferedReader().use {{ it.readText() }}
+            }}.getOrElse {{ e ->
+                android.util.Log.e("Orbital", "failed to read $LANGUAGE_ASSET", e)
+                return@launch
+            }}
+            OrbitalKernel.installLanguage(language)?.let {{ refusal ->
+                android.util.Log.e("Orbital", refusal)
+                return@launch
+            }}
             val created = OrbitalKernel.createFromFile(schemaFile.absolutePath, clientId)
             if (created == null) {{
-                android.util.Log.e("Orbital", "kernel init failed from $RESOLVED_SCHEMA_ASSET")
+                android.util.Log.e("Orbital", "kernel init failed from $RESOLVED_SCHEMA_ASSET: ${{OrbitalKernel.initError}}")
                 return@launch
             }}
             kernel = created
@@ -823,6 +833,7 @@ class OrbitalViewModel(application: Application) : AndroidViewModel(application)
         /** The host's own sign-in route (`HOST_SIGN_IN_ROUTE`): no page declares it, the NavHost renders `OrbitalSignInScreen`. */
         const val HOST_SIGN_IN_ROUTE = "{host_sign_in_route}"
         private const val RESOLVED_SCHEMA_ASSET = "resolved_schema.json"
+        private const val LANGUAGE_ASSET = "language.json"
         private const val BASE_URL = "{base_url}"
         private val INITIAL_STATES: Map<String, String> = {initial_states}
         private val TRAITS_WITH_INIT: Set<String> = {traits_with_init}

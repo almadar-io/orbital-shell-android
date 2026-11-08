@@ -331,6 +331,10 @@ class OrbitalGameSurfaceView(context: Context) : SurfaceView(context), SurfaceHo
         val w = width.takeIf { it > 0 } ?: 320
         val h = height.takeIf { it > 0 } ?: 240
         rendererPtr = OrbitalGameBridge.nativeInit(surface, w, h, null)
+        if (rendererPtr == 0L) {
+            Log.e("OrbitalGame", "renderer init failed (${w}x$h): " + OrbitalGameBridge.nativeLastError(0L))
+            return
+        }
         applyScale()
         applyScene()
     }

@@ -45,8 +45,12 @@ fun StackRenderer(
                 else -> Alignment.Top
             }
             if (wrap) {
-                FlowRow(modifier = styled, horizontalArrangement = arrangement, verticalArrangement = Arrangement.spacedBy(gap)) {
-                    nodes.forEach { RenderChild(it, Modifier, onEvent) }
+                // A wrapped item is never wider than its row (the web's flex-wrap): its text wraps instead of clipping.
+                BoxWithConstraints(modifier = styled) {
+                    val row = maxWidth
+                    FlowRow(horizontalArrangement = arrangement, verticalArrangement = Arrangement.spacedBy(gap)) {
+                        nodes.forEach { RenderChild(it, Modifier.widthIn(max = row), onEvent) }
+                    }
                 }
             } else {
                 if (flex || justify != "start") {

@@ -51,6 +51,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.RectangleShape
@@ -127,6 +128,31 @@ internal class AlmadarSvgDecoderFactory : Decoder.Factory {
         if (result.mimeType == ALMADAR_SVG_MIME) svg.create(result, options, imageLoader) else null
 }
 
+/**
+ * A `data:` image source (base64 or percent-encoded), decoded in memory with its declared MIME type, so an inline SVG
+ * reaches [AlmadarSvgDecoderFactory] like a fetched one.
+ */
+internal class AlmadarDataUriFetcher(private val uri: String, private val options: Options) : coil.fetch.Fetcher {
+    override suspend fun fetch(): coil.fetch.FetchResult? {
+        val comma = uri.indexOf(',')
+        if (comma < 0) return null
+        val header = uri.substring("data:".length, comma).split(';')
+        val payload = uri.substring(comma + 1)
+        val bytes = if ("base64" in header) android.util.Base64.decode(payload, android.util.Base64.DEFAULT)
+            else android.net.Uri.decode(payload).toByteArray(Charsets.UTF_8)
+        return coil.fetch.SourceResult(
+            source = coil.decode.ImageSource(okio.Buffer().write(bytes), options.context),
+            mimeType = header.firstOrNull()?.ifEmpty { null },
+            dataSource = coil.decode.DataSource.MEMORY
+        )
+    }
+
+    class Factory : coil.fetch.Fetcher.Factory<android.net.Uri> {
+        override fun create(data: android.net.Uri, options: Options, imageLoader: ImageLoader): coil.fetch.Fetcher? =
+            if (data.scheme == "data") AlmadarDataUriFetcher(data.toString(), options) else null
+    }
+}
+
 /** The one process-wide Coil loader every image-bearing atom shares; the SVG decoder is registered here and nowhere else. */
 internal object AlmadarImages {
     private var loader: ImageLoader? = null
@@ -134,7 +160,10 @@ internal object AlmadarImages {
     @Synchronized
     fun loader(context: Context): ImageLoader =
         loader ?: ImageLoader.Builder(context)
-            .components { add(AlmadarSvgDecoderFactory()) }
+            .components {
+                add(AlmadarDataUriFetcher.Factory())
+                add(AlmadarSvgDecoderFactory())
+            }
             .build()
             .also { loader = it }
 }
@@ -245,6 +274,44 @@ internal fun almadarFieldId(name: String, props: JsonElement): String =
 
 internal fun Modifier.almadarActionTag(eventKey: String, props: JsonElement): Modifier =
     this.almadarTag(almadarActionId(eventKey, props))
+
+/** The breakpoint prefixes of a class string, mobile-first: each applies from its width up (the web's media queries). */
+private val ALMADAR_CLASS_BREAKPOINTS: List<Pair<String, Dp>> = listOf(
+    "sm" to AlmadarBreakpoints.sm,
+    "md" to AlmadarBreakpoints.md,
+    "lg" to AlmadarBreakpoints.lg,
+    "xl" to AlmadarBreakpoints.xl,
+    "2xl" to AlmadarBreakpoints.xxl
+)
+
+private val ALMADAR_DISPLAY_VALUES: Set<String> =
+    setOf("block", "flex", "grid", "inline", "inline-block", "inline-flex", "inline-grid", "contents", "table")
+
+/**
+ * Whether a node's `className` display utilities show it at `width`: the unprefixed `hidden`/display token first,
+ * then each breakpoint the width reaches, in ascending order, so `hidden lg:flex` hides below `lg` and `lg:hidden`
+ * hides from `lg` up.
+ */
+internal fun almadarClassVisibleAt(className: String, width: Dp): Boolean {
+    var visible = true
+    val tokens = className.split(' ').filter { it.isNotEmpty() }
+    fun apply(token: String) {
+        if (token == "hidden") visible = false else if (token in ALMADAR_DISPLAY_VALUES) visible = true
+    }
+    tokens.filter { ':' !in it }.forEach(::apply)
+    for ((prefix, from) in ALMADAR_CLASS_BREAKPOINTS) {
+        if (width < from) break
+        tokens.filter { it.startsWith("$prefix:") }.forEach { apply(it.removePrefix("$prefix:")) }
+    }
+    return visible
+}
+
+/** [almadarClassVisibleAt] for a node's props at the current window width. */
+@Composable
+internal fun almadarClassVisible(props: JsonElement): Boolean {
+    val className = ((props as? JsonObject)?.get("className") as? JsonPrimitive)?.contentOrNull ?: return true
+    return almadarClassVisibleAt(className, LocalConfiguration.current.screenWidthDp.dp)
+}
 
 internal fun Modifier.almadarTag(id: String): Modifier =
     if (id.isEmpty()) this else this.verificationId(id)
@@ -1151,6 +1218,20 @@ internal fun almadarGradientColor(raw: String, palette: AlmadarColorPalette): Co
     val parsed = parseCssColor(raw, Color.Unspecified)
     return if (parsed == Color.Unspecified) null else parsed
 }
+
+private val ALMADAR_SVG_COLOR_VAR = Regex("var\\(--color-[a-z0-9-]+\\)")
+
+/** An inline SVG's `var(--color-*)` theme references as the palette's colours (an SVG decoder has no CSS variables). */
+internal fun almadarResolveSvgColorVars(svg: String, palette: AlmadarColorPalette): String =
+    ALMADAR_SVG_COLOR_VAR.replace(svg) { match ->
+        val color = almadarGradientColor(match.value, palette)
+        if (color == null) {
+            Log.w("AlmadarSvg", "unresolved theme colour ${match.value}")
+            match.value
+        } else {
+            "#%06X".format(color.toArgb() and 0xFFFFFF)
+        }
+    }
 
 /** Only the plain `linear-gradient(<angle>|to <side>, <colour> [<pct>], ...)` grammar; anything else (corner directions, `color-mix`, unlisted `var()`, non-percentage positions) is null and the caller logs the skip. */
 internal fun almadarParseLinearGradient(css: String, palette: AlmadarColorPalette): AlmadarGradient? {

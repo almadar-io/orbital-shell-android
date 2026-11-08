@@ -84,10 +84,16 @@ fun BoxRenderer(
             onEvent(hoverEvent, eventEnvelope(props, JsonObject(mapOf("hovered" to JsonPrimitive(hovered)))))
         }
     }
+    val (layers, flow) = props.children().partition { child -> child.string("position") == "absolute" }
     Box(modifier = modifier.almadarLabel(props.string("aria-label")), propagateMinConstraints = true) {
         CompositionLocalProvider(LocalContentColor provides foreground) {
+            // An absolute child is a layer behind the flow: it fills the box at `inset-0`, else sits at its start corner.
+            layers.forEach { layer ->
+                val fills = layer.string("className").split(' ').contains("inset-0")
+                RenderChild(layer, if (fills) Modifier.matchParentSize() else Modifier.align(Alignment.TopStart), onEvent)
+            }
             Column(modifier = styled.padding(horizontal = padX, vertical = padY)) {
-                props.children().forEach { RenderChild(it, Modifier.fillMaxWidth(), onEvent) }
+                flow.forEach { RenderChild(it, Modifier.fillMaxWidth(), onEvent) }
             }
         }
     }

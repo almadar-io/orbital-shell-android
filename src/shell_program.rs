@@ -101,7 +101,12 @@ impl ShellProgram for AndroidProgram {
         }
         crate::require_renderer_pack()
             .map_err(|e| ShellFailure::new(CODE_GENERATE_FAILED, format!("{}: {e}", e.code())))?;
-        let backend = crate::AndroidBackend::new().with_resolved_schema(resolved(request)?);
+        let language = orbital_core_base::language_data::language_bundle_json().map_err(|e| {
+            ShellFailure::new(CODE_GENERATE_FAILED, format!("load installed language bundle: {e}"))
+        })?;
+        let backend = crate::AndroidBackend::new()
+            .with_resolved_schema(resolved(request)?)
+            .with_language(language);
         let generated = write_project(
             &request.module,
             output,

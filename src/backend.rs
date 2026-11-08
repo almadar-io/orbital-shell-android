@@ -20,6 +20,9 @@ pub struct AndroidBackend {
     /// §159) mounts without a device-side compiler. `None` for callers with
     /// no resolved schema (existing tests/CLI paths), which emit no extra file.
     resolved_schema: Option<OrbitalSchema>,
+    /// The installed language bundle (`language_data::language_bundle_json`), bundled as `assets/language.json`: a
+    /// device has no `node_modules` to find the operator table in, so the kernel installs this before it mounts.
+    language: Option<String>,
 }
 
 impl AndroidBackend {
@@ -32,6 +35,12 @@ impl AndroidBackend {
     /// `assets/resolved_schema.json` into the app module.
     pub fn with_resolved_schema(mut self, schema: OrbitalSchema) -> Self {
         self.resolved_schema = Some(schema);
+        self
+    }
+
+    /// Attach the language bundle so `generate` also emits `assets/language.json`.
+    pub fn with_language(mut self, language: String) -> Self {
+        self.language = Some(language);
         self
     }
 }
@@ -64,12 +73,18 @@ impl Backend for AndroidBackend {
                     content: content.clone(),
                 }),
         );
-        files.push(generate_auth_test_file());
+        files.extend(generate_bridge_test_files());
         files.push(generate_pattern_snapshot_test_file());
         files.push(generate_app_file(module));
         files.push(generate_generated_activity_file(module));
         if let Some(schema) = &self.resolved_schema {
             files.push(generate_resolved_schema_file(schema));
+        }
+        if let Some(language) = &self.language {
+            files.push(GeneratedFile {
+                path: "app/src/main/assets/language.json".to_string(),
+                content: language.clone(),
+            });
         }
 
         if module.entities.is_empty() {
@@ -110,7 +125,9 @@ fn generate_entities_file(
         let ident = orbital_core_base::type_compat::type_identifier(name);
         let rendered = oir_type_to_kotlin_with(ty, &ident, &file_hoisted);
         if rendered != ident {
-            file_hoisted.borrow_mut().push(format!("typealias {ident} = {rendered}"));
+            file_hoisted
+                .borrow_mut()
+                .push(format!("typealias {ident} = {rendered}"));
         }
     }
     for decl in file_hoisted.into_inner() {
@@ -193,7 +210,10 @@ fn kotlin_enum_decl(enum_name: &str, values: &[String]) -> String {
             )
         })
         .collect();
-    format!("@Serializable\nenum class {enum_name} {{{}\n}}\n\n", variants.join(","))
+    format!(
+        "@Serializable\nenum class {enum_name} {{{}\n}}\n\n",
+        variants.join(",")
+    )
 }
 
 fn generate_entity(entity: &OirEntity) -> String {
@@ -222,7 +242,14 @@ fn generate_entity(entity: &OirEntity) -> String {
             &hoisted,
         );
         let default = field.default.as_ref().and_then(|v| {
-            match render_default(&KotlinLiteral { union_name: &format!("{}{}", class_name, split_to_pascal_case(&field.name)) }, v, &type_hint, None) {
+            match render_default(
+                &KotlinLiteral {
+                    union_name: &format!("{}{}", class_name, split_to_pascal_case(&field.name)),
+                },
+                v,
+                &type_hint,
+                None,
+            ) {
                 Ok(rendered) => rendered,
                 Err(mismatch) => Some(mismatch.marker()),
             }
@@ -303,7 +330,13 @@ fn generate_events_file(module: &OirModule) -> GeneratedFile {
             let fields: Vec<(String, OirType, bool)> = event
                 .payload_fields()
                 .into_iter()
-                .map(|f| (f.name, payload_type_local(&f.field_type, &local), f.required))
+                .map(|f| {
+                    (
+                        f.name,
+                        payload_type_local(&f.field_type, &local),
+                        f.required,
+                    )
+                })
                 .collect();
             if fields.is_empty() {
                 continue;
@@ -357,16 +390,29 @@ fn generate_events_file(module: &OirModule) -> GeneratedFile {
             let context = format!("{}{}", class_name, split_to_pascal_case(name));
             let ty = match knob.enum_values.as_ref().filter(|v| !v.is_empty()) {
                 Some(values) => {
-                    hoisted.borrow_mut().push(kotlin_enum_decl(&context, values).trim_end().to_string());
-                    OirType::Enum { name: context.clone() }
+                    hoisted
+                        .borrow_mut()
+                        .push(kotlin_enum_decl(&context, values).trim_end().to_string());
+                    OirType::Enum {
+                        name: context.clone(),
+                    }
                 }
                 None => knob.field_type.clone(),
             };
             let (inner, optional) = ty.effective(true);
             let kotlin_type = oir_type_to_kotlin_with(inner, &context, &hoisted);
-            let default = knob.default.as_ref().and_then(|v| match render_default(&KotlinLiteral { union_name: &context }, v, inner, None) {
-                Ok(rendered) => rendered,
-                Err(mismatch) => Some(mismatch.marker()),
+            let default = knob.default.as_ref().and_then(|v| {
+                match render_default(
+                    &KotlinLiteral {
+                        union_name: &context,
+                    },
+                    v,
+                    inner,
+                    None,
+                ) {
+                    Ok(rendered) => rendered,
+                    Err(mismatch) => Some(mismatch.marker()),
+                }
             });
             let tail = match default {
                 Some(d) => format!("{}{} = {}", kotlin_type, if optional { "?" } else { "" }, d),
@@ -1347,7 +1393,9 @@ impl TargetTypeRenderer for KotlinRenderer<'_> {
         let Some(members) = orbital_core_base::type_compat::literal_union_members(name) else {
             return split_to_pascal_case(name);
         };
-        let decl = kotlin_enum_decl(&self.context_name, &members).trim_end().to_string();
+        let decl = kotlin_enum_decl(&self.context_name, &members)
+            .trim_end()
+            .to_string();
         let mut hoisted = self.hoisted.borrow_mut();
         if !hoisted.contains(&decl) {
             hoisted.push(decl);
@@ -1419,7 +1467,10 @@ impl TargetTypeRenderer for KotlinRenderer<'_> {
             .map(|v| {
                 let variant_name = format!("{}{}", name, split_to_pascal_case(&v.name));
                 match &v.field_type {
-                    OirType::Struct { fields, additional: _additional } => {
+                    OirType::Struct {
+                        fields,
+                        additional: _additional,
+                    } => {
                         let fields = fields
                             .iter()
                             .map(|f| {
@@ -1432,7 +1483,8 @@ impl TargetTypeRenderer for KotlinRenderer<'_> {
                                     hoisted: self.hoisted,
                                 };
                                 let (inner_ty, optional) = f.effective_type();
-                                let t = render_type(&grandchild, inner_ty, f.enum_values.as_deref());
+                                let t =
+                                    render_type(&grandchild, inner_ty, f.enum_values.as_deref());
                                 let opt = if optional { "?" } else { "" };
                                 format!(
                                     "val {}: {}{}",
@@ -1454,9 +1506,8 @@ impl TargetTypeRenderer for KotlinRenderer<'_> {
                             hoisted: self.hoisted,
                         };
                         let ty = render_type(&value_context, other, None);
-                        let decl = format!(
-                            "    data class {variant_name}(val value: {ty}) : {name}()"
-                        );
+                        let decl =
+                            format!("    data class {variant_name}(val value: {ty}) : {name}()");
                         (decl, ty, false)
                     }
                 }
@@ -1665,7 +1716,10 @@ impl TargetLiteralRenderer for KotlinLiteral<'_> {
         }
     }
     fn node_text(&self, s: &str) -> Option<String> {
-        Some(format!("kotlinx.serialization.json.JsonPrimitive({})", self.string(s)))
+        Some(format!(
+            "kotlinx.serialization.json.JsonPrimitive({})",
+            self.string(s)
+        ))
     }
     fn string(&self, s: &str) -> String {
         format!("\"{}\"", escape_double_quoted(s))
@@ -1685,11 +1739,18 @@ impl TargetLiteralRenderer for KotlinLiteral<'_> {
         format!("listOf({})", items.join(", "))
     }
     fn map(&self, entries: Vec<(String, String)>) -> Option<String> {
-        let pairs: Vec<String> = entries.into_iter().map(|(k, v)| format!("{} to {v}", self.string(&k))).collect();
+        let pairs: Vec<String> = entries
+            .into_iter()
+            .map(|(k, v)| format!("{} to {v}", self.string(&k)))
+            .collect();
         Some(format!("mapOf({})", pairs.join(", ")))
     }
     fn union_arm(&self, arm: &str, inner: String) -> String {
-        format!("{0}.{0}{1}({inner})", self.union_name, split_to_pascal_case(arm))
+        format!(
+            "{0}.{0}{1}({inner})",
+            self.union_name,
+            split_to_pascal_case(arm)
+        )
     }
 }
 
@@ -1913,14 +1974,20 @@ class PatternSnapshotTests {{
 /// Pack sources under this prefix are the app's unit-test sources, not app sources.
 const PACK_TESTS_PREFIX: &str = "bridge/tests/";
 
-fn generate_auth_test_file() -> GeneratedFile {
-    GeneratedFile {
-        path: "app/src/test/kotlin/generated/patterns/core/OrbitalAuthTest.kt".to_string(),
-        content: crate::pack::pack()
-            .source(&format!("{PACK_TESTS_PREFIX}OrbitalAuthTest.kt"))
-            .expect("the pack ships bridge/tests/OrbitalAuthTest.kt")
-            .to_string(),
-    }
+/// The pack's unit tests, copied into the generated app's test source set.
+const BRIDGE_TEST_FILES: [&str; 2] = ["OrbitalAuthTest.kt", "CodeBlockBufferTest.kt"];
+
+fn generate_bridge_test_files() -> Vec<GeneratedFile> {
+    BRIDGE_TEST_FILES
+        .iter()
+        .map(|name| GeneratedFile {
+            path: format!("app/src/test/kotlin/generated/patterns/core/{name}"),
+            content: crate::pack::pack()
+                .source(&format!("{PACK_TESTS_PREFIX}{name}"))
+                .unwrap_or_else(|| panic!("the pack ships {PACK_TESTS_PREFIX}{name}"))
+                .to_string(),
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -2213,10 +2280,18 @@ mod tests {
         let mut module = OirModule::new("TestApp", "1.0.0");
         module.named_types.insert(
             alias.to_string(),
-            OirType::Struct { additional: None, fields: vec![OirField::new("id", OirType::String)].into() },
+            OirType::Struct {
+                additional: None,
+                fields: vec![OirField::new("id", OirType::String)].into(),
+            },
         );
         let mut holder = OirEntity::new("Holder");
-        holder.fields.push(OirField::new("claim", OirType::TypeRef { name: alias.to_string() }));
+        holder.fields.push(OirField::new(
+            "claim",
+            OirType::TypeRef {
+                name: alias.to_string(),
+            },
+        ));
         module.entities.push(holder);
         module
     }
@@ -2224,21 +2299,34 @@ mod tests {
     #[test]
     fn a_union_arm_wrapping_a_hoisted_union_does_not_shadow_it_with_the_arm_class() {
         let inner = OirType::Union {
-            variants: vec![OirField::new("string", OirType::String), OirField::new("number", OirType::Number)].into(),
+            variants: vec![
+                OirField::new("string", OirType::String),
+                OirField::new("number", OirType::Number),
+            ]
+            .into(),
         };
         let outer = OirType::Union {
             variants: vec![
                 OirField::new("string", OirType::String),
-                OirField::new("map", OirType::map(OirType::String, OirType::optional(inner))),
+                OirField::new(
+                    "map",
+                    OirType::map(OirType::String, OirType::optional(inner)),
+                ),
             ]
             .into(),
         };
         let mut module = OirModule::new("TestApp", "1.0.0");
         module.named_types.insert("Cell".to_string(), outer);
         let content = entities_file(&module);
-        assert!(content.contains("data class CellMap(val value: Map<String, CellMapValue?>) : Cell()"), "{content}");
+        assert!(
+            content.contains("data class CellMap(val value: Map<String, CellMapValue?>) : Cell()"),
+            "{content}"
+        );
         assert!(content.contains("sealed class CellMapValue {"), "{content}");
-        assert!(content.contains("data class CellString(val value: String) : Cell()"), "control: a scalar arm is unchanged: {content}");
+        assert!(
+            content.contains("data class CellString(val value: String) : Cell()"),
+            "control: a scalar arm is unchanged: {content}"
+        );
     }
 
     #[test]
@@ -2246,12 +2334,21 @@ mod tests {
         let mut module = OirModule::new("TestApp", "1.0.0");
         module.named_types.insert(
             "std-store::Row".to_string(),
-            OirType::Map { key: Box::new(OirType::String), value: Box::new(OirType::String) },
+            OirType::Map {
+                key: Box::new(OirType::String),
+                value: Box::new(OirType::String),
+            },
         );
         let content = entities_file(&module);
-        assert!(content.contains("typealias StdStoreRow = Map<String, String>"), "{content}");
+        assert!(
+            content.contains("typealias StdStoreRow = Map<String, String>"),
+            "{content}"
+        );
         let control = entities_file(&holder_module("std-foo::Bar"));
-        assert!(!control.contains("typealias StdFooBar"), "control: a struct is declared, not aliased: {control}");
+        assert!(
+            !control.contains("typealias StdFooBar"),
+            "control: a struct is declared, not aliased: {control}"
+        );
     }
 
     #[test]
@@ -2345,7 +2442,10 @@ mod tests {
         use orbital_core_base::ir::OirTrait;
         let mut module = OirModule::new("TestApp", "1.0.0");
         let mut t = OirTrait::new("Game");
-        let knob = |ty| orbital_core_base::ir::OirConfigFieldType { field_type: ty, values: None };
+        let knob = |ty| orbital_core_base::ir::OirConfigFieldType {
+            field_type: ty,
+            values: None,
+        };
         let mut schema = orbital_core_base::ir::OirConfigSchema::new();
         schema.insert("running".into(), knob(OirType::Boolean));
         schema.insert("pointsPerKill".into(), knob(OirType::Number));
@@ -2409,6 +2509,28 @@ mod tests {
             .files
             .iter()
             .any(|f| f.path == "app/src/main/assets/resolved_schema.json"));
+    }
+
+    #[test]
+    fn the_language_bundle_ships_as_an_asset_only_when_attached() {
+        let module = OirModule::new("TestApp", "1.0.0");
+        let with = AndroidBackend::new()
+            .with_language("{\"language\":1}".into())
+            .generate(&module);
+        let asset = with
+            .files
+            .iter()
+            .find(|f| f.path == "app/src/main/assets/language.json")
+            .expect("language.json");
+        assert_eq!(asset.content, "{\"language\":1}");
+        let without = AndroidBackend::new().generate(&module);
+        assert!(
+            !without
+                .files
+                .iter()
+                .any(|f| f.path == "app/src/main/assets/language.json"),
+            "control: no bundle attached, no asset"
+        );
     }
 
     #[test]
@@ -2553,7 +2675,9 @@ mod tests {
     #[test]
     fn a_nullable_number_field_renders_one_optional() {
         let mut entity = OirEntity::new("Rec");
-        entity.fields.push(OirField::optional("v", OirType::optional(OirType::Number)));
+        entity
+            .fields
+            .push(OirField::optional("v", OirType::optional(OirType::Number)));
         entity.fields.push({
             let mut f = OirField::new("n", OirType::Number);
             f.default = Some(OirValue::Number(1.0));
@@ -2660,11 +2784,24 @@ mod tests {
         let module = OirModule::new("TestApp", "1.0.0");
         let content = generate_view_model_file(&module).content;
         assert!(content.contains("viewModelScope.launch(Dispatchers.IO) {"));
+        assert!(content.contains(r#"app.assets.open(RESOLVED_SCHEMA_ASSET).use"#));
+        assert!(content.contains(
+            "val created = OrbitalKernel.createFromFile(schemaFile.absolutePath, clientId)"
+        ));
+        let install = content
+            .find("OrbitalKernel.installLanguage(language)")
+            .expect("the bundled language is installed");
+        let create = content
+            .find("OrbitalKernel.createFromFile(")
+            .expect("kernel created");
         assert!(
-            content.contains(r#"app.assets.open(RESOLVED_SCHEMA_ASSET).use"#)
+            install < create,
+            "the language is installed before the kernel mounts"
         );
-        assert!(content.contains("val created = OrbitalKernel.createFromFile(schemaFile.absolutePath, clientId)"));
-        assert!(!content.contains("readText()"), "the program is never read into a JVM string");
+        assert!(
+            content.contains("${OrbitalKernel.initError}"),
+            "a refused init says why"
+        );
         assert!(content.contains("private val clientId = UUID.randomUUID().toString()"));
         assert!(content.contains("withContext(Dispatchers.Main) {"));
     }
@@ -3365,18 +3502,29 @@ mod tests {
             fields: vec![OirField::new("anchor", OirType::String)].into(),
         };
         let union_ty = OirType::Union {
-            variants: vec![OirField::new("string", OirType::String), OirField::new("Env", env)].into(),
+            variants: vec![
+                OirField::new("string", OirType::String),
+                OirField::new("Env", env),
+            ]
+            .into(),
         };
         let (ty, hoisted) = oir_type_to_kotlin_hoisted(&union_ty, "HolderHost");
         assert_eq!(ty, "HolderHost");
         assert_eq!(hoisted, vec!["@Serializable(with = HolderHostSerializer::class)\nsealed class HolderHost {\n    data class HolderHostString(val value: String) : HolderHost()\n    @Serializable\n    data class HolderHostEnv(val anchor: String) : HolderHost()\n}\n\nobject HolderHostSerializer : kotlinx.serialization.KSerializer<HolderHost> {\n    override val descriptor: kotlinx.serialization.descriptors.SerialDescriptor = kotlinx.serialization.json.JsonElement.serializer().descriptor\n\n    override fun deserialize(decoder: kotlinx.serialization.encoding.Decoder): HolderHost {\n        val input = decoder as kotlinx.serialization.json.JsonDecoder\n        val json = input.json\n        val element = input.decodeJsonElement()\n        try { return HolderHost.HolderHostString(json.decodeFromJsonElement(kotlinx.serialization.serializer<String>(), element)) } catch (e: kotlinx.serialization.SerializationException) {} catch (e: IllegalArgumentException) {}\n        try { return json.decodeFromJsonElement(kotlinx.serialization.serializer<HolderHost.HolderHostEnv>(), element) } catch (e: kotlinx.serialization.SerializationException) {} catch (e: IllegalArgumentException) {}\n        throw kotlinx.serialization.SerializationException(\"no HolderHost arm matches\")\n    }\n\n    override fun serialize(encoder: kotlinx.serialization.encoding.Encoder, value: HolderHost) {\n        val output = encoder as kotlinx.serialization.json.JsonEncoder\n        val json = output.json\n        output.encodeJsonElement(when (value) {\n            is HolderHost.HolderHostString -> json.encodeToJsonElement(kotlinx.serialization.serializer<String>(), value.value)\n            is HolderHost.HolderHostEnv -> json.encodeToJsonElement(kotlinx.serialization.serializer<HolderHost.HolderHostEnv>(), value)\n        })\n    }\n}"]);
         let default = render_default(
-            &KotlinLiteral { union_name: "HolderHost" },
+            &KotlinLiteral {
+                union_name: "HolderHost",
+            },
             &orbital_core_base::ir::OirValue::String("api.example.test".into()),
             &union_ty,
             None,
         );
-        assert_eq!(default, Ok(Some("HolderHost.HolderHostString(\"api.example.test\")".to_string())));
+        assert_eq!(
+            default,
+            Ok(Some(
+                "HolderHost.HolderHostString(\"api.example.test\")".to_string()
+            ))
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -4524,10 +4672,18 @@ mod tests {
     #[test]
     fn a_payload_key_not_marked_required_renders_nullable_with_a_null_default() {
         let mut module = payload_module();
-        module.traits[0].events[0].payload_required_fields.remove("size");
+        module.traits[0].events[0]
+            .payload_required_fields
+            .remove("size");
         let content = events_kt(&module);
-        assert!(content.contains("    val size: Double? = null,"), "{content}");
-        assert!(content.contains("    val text: String,"), "control: a `!` key stays required: {content}");
+        assert!(
+            content.contains("    val size: Double? = null,"),
+            "{content}"
+        );
+        assert!(
+            content.contains("    val text: String,"),
+            "control: a `!` key stays required: {content}"
+        );
     }
 
     #[test]
@@ -4537,22 +4693,49 @@ mod tests {
             .payload_schema
             .as_mut()
             .expect("CHUNK payload")
-            .insert("kind".into(), OirType::Enum { name: "\"a\" | \"b\"".into() });
-        module.traits[0].events[0].payload_required_fields.insert("kind".into());
+            .insert(
+                "kind".into(),
+                OirType::Enum {
+                    name: "\"a\" | \"b\"".into(),
+                },
+            );
+        module.traits[0].events[0]
+            .payload_required_fields
+            .insert("kind".into());
         let content = events_kt(&module);
-        assert!(content.contains("enum class ChunkCHUNKPayloadKind {"), "{content}");
-        assert!(content.contains("    val kind: ChunkCHUNKPayloadKind,\n"), "{content}");
-        assert!(!content.contains("\"a\" | \"b\""), "the literal text is never a type: {content}");
+        assert!(
+            content.contains("enum class ChunkCHUNKPayloadKind {"),
+            "{content}"
+        );
+        assert!(
+            content.contains("    val kind: ChunkCHUNKPayloadKind,\n"),
+            "{content}"
+        );
+        assert!(
+            !content.contains("\"a\" | \"b\""),
+            "the literal text is never a type: {content}"
+        );
     }
 
     #[test]
     fn an_operator_or_dotted_literal_member_is_a_distinct_legal_kotlin_identifier() {
-        let values: Vec<String> = ["==", "!=", "127.0.0.1", "inProgress"].iter().map(|v| v.to_string()).collect();
+        let values: Vec<String> = ["==", "!=", "127.0.0.1", "inProgress"]
+            .iter()
+            .map(|v| v.to_string())
+            .collect();
         let decl = kotlin_enum_decl("Op", &values);
-        for member in ["__3d__3d_", "__21__3d_", "_127_2e_0_2e_0_2e_1", "InProgress"] {
+        for member in [
+            "__3d__3d_",
+            "__21__3d_",
+            "_127_2e_0_2e_0_2e_1",
+            "InProgress",
+        ] {
             assert!(decl.contains(&format!("\n    {member}")), "{decl}");
         }
-        assert!(decl.contains("@SerialName(\"==\")"), "the wire value stays the literal: {decl}");
+        assert!(
+            decl.contains("@SerialName(\"==\")"),
+            "the wire value stays the literal: {decl}"
+        );
         assert_eq!(
             KotlinLiteral { union_name: "Op" }.enum_member("Op", "!="),
             "Op.__21__3d_",
@@ -4565,11 +4748,36 @@ mod tests {
         use orbital_core_base::ir::OirValue;
         let text = OirValue::String("Ticket details".into());
         assert_eq!(
-            render_default(&KotlinLiteral { union_name: "Ctx" }, &text, &OirType::Node, None),
-            Ok(Some("kotlinx.serialization.json.JsonPrimitive(\"Ticket details\")".to_string()))
+            render_default(
+                &KotlinLiteral { union_name: "Ctx" },
+                &text,
+                &OirType::Node,
+                None
+            ),
+            Ok(Some(
+                "kotlinx.serialization.json.JsonPrimitive(\"Ticket details\")".to_string()
+            ))
         );
-        assert_eq!(render_default(&KotlinLiteral { union_name: "Ctx" }, &text, &OirType::String, None), Ok(Some("\"Ticket details\"".to_string())), "control: a string field keeps its plain string literal");
-        assert!(render_default(&KotlinLiteral { union_name: "Ctx" }, &OirValue::Number(1.0), &OirType::Node, None).is_err(), "control: a number is not a text node");
+        assert_eq!(
+            render_default(
+                &KotlinLiteral { union_name: "Ctx" },
+                &text,
+                &OirType::String,
+                None
+            ),
+            Ok(Some("\"Ticket details\"".to_string())),
+            "control: a string field keeps its plain string literal"
+        );
+        assert!(
+            render_default(
+                &KotlinLiteral { union_name: "Ctx" },
+                &OirValue::Number(1.0),
+                &OirType::Node,
+                None
+            )
+            .is_err(),
+            "control: a number is not a text node"
+        );
     }
 
     #[test]
@@ -4579,30 +4787,85 @@ mod tests {
         subject.required = true;
         entity.fields.push(subject);
         let content = generate_entity(&entity);
-        assert!(content.contains("    val id: String? = null,\n"), "{content}");
-        assert!(content.contains("val subject: String,\n"), "control: a required field stays required: {content}");
+        assert!(
+            content.contains("    val id: String? = null,\n"),
+            "{content}"
+        );
+        assert!(
+            content.contains("val subject: String,\n"),
+            "control: a required field stays required: {content}"
+        );
     }
 
     #[test]
     fn a_map_default_renders_as_a_kotlin_map_of() {
         use orbital_core_base::ir::{render_default, OirType, OirValue};
         let lit = KotlinLiteral { union_name: "Ctx" };
-        let ty = OirType::Map { key: Box::new(OirType::String), value: Box::new(OirType::Array { inner: Box::new(OirType::Number) }) };
-        assert_eq!(render_default(&lit, &OirValue::Object(Default::default()), &ty, None), Ok(Some("mapOf()".to_string())));
+        let ty = OirType::Map {
+            key: Box::new(OirType::String),
+            value: Box::new(OirType::Array {
+                inner: Box::new(OirType::Number),
+            }),
+        };
+        assert_eq!(
+            render_default(&lit, &OirValue::Object(Default::default()), &ty, None),
+            Ok(Some("mapOf()".to_string()))
+        );
         let mut fields = orbital_core_base::ir::types::OirObject::default();
-        fields.insert("open".to_string(), OirValue::Array(vec![OirValue::Number(1.0)]));
-        assert_eq!(render_default(&lit, &OirValue::Object(fields), &ty, None), Ok(Some("mapOf(\"open\" to listOf(1.0))".to_string())));
-        let st = OirType::Struct { additional: None, fields: vec![orbital_core_base::ir::OirField::new("id", OirType::String)].into() };
-        assert_eq!(render_default(&lit, &OirValue::Object(Default::default()), &st, None), Ok(None), "control: a struct default still declines");
+        fields.insert(
+            "open".to_string(),
+            OirValue::Array(vec![OirValue::Number(1.0)]),
+        );
+        assert_eq!(
+            render_default(&lit, &OirValue::Object(fields), &ty, None),
+            Ok(Some("mapOf(\"open\" to listOf(1.0))".to_string()))
+        );
+        let st = OirType::Struct {
+            additional: None,
+            fields: vec![orbital_core_base::ir::OirField::new("id", OirType::String)].into(),
+        };
+        assert_eq!(
+            render_default(&lit, &OirValue::Object(Default::default()), &st, None),
+            Ok(None),
+            "control: a struct default still declines"
+        );
     }
 
     #[test]
     fn a_list_of_literal_union_members_names_the_hoisted_context_enum() {
-        let ty = OirType::Array { inner: Box::new(OirType::Enum { name: "\"text\" | \"list\"".into() }) };
-        let value = OirValue::Array(vec![OirValue::String("text".into()), OirValue::String("list".into())]);
-        let rendered = render_default(&KotlinLiteral { union_name: "IndexConfigPartKinds" }, &value, &ty, None);
-        assert_eq!(rendered.unwrap().unwrap(), "listOf(IndexConfigPartKinds.Text, IndexConfigPartKinds.List)");
-        let named = render_default(&KotlinLiteral { union_name: "Ctx" }, &OirValue::String("on".into()), &OirType::Enum { name: "Mode".into() }, None);
-        assert_eq!(named.unwrap().unwrap(), "Mode.On", "control: a named enum keeps its own name");
+        let ty = OirType::Array {
+            inner: Box::new(OirType::Enum {
+                name: "\"text\" | \"list\"".into(),
+            }),
+        };
+        let value = OirValue::Array(vec![
+            OirValue::String("text".into()),
+            OirValue::String("list".into()),
+        ]);
+        let rendered = render_default(
+            &KotlinLiteral {
+                union_name: "IndexConfigPartKinds",
+            },
+            &value,
+            &ty,
+            None,
+        );
+        assert_eq!(
+            rendered.unwrap().unwrap(),
+            "listOf(IndexConfigPartKinds.Text, IndexConfigPartKinds.List)"
+        );
+        let named = render_default(
+            &KotlinLiteral { union_name: "Ctx" },
+            &OirValue::String("on".into()),
+            &OirType::Enum {
+                name: "Mode".into(),
+            },
+            None,
+        );
+        assert_eq!(
+            named.unwrap().unwrap(),
+            "Mode.On",
+            "control: a named enum keeps its own name"
+        );
     }
 }

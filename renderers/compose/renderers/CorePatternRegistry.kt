@@ -258,7 +258,9 @@ object CorePatternRegistry {
             FallbackRenderer(patternName, props, modifier, onEvent)
         }
         return { props, modifier, onEvent ->
-            inner(props, modifier.verificationContainer(VerificationIds.pattern(patternName)).almadarNodeEnter(props), onEvent)
+            if (almadarClassVisible(props)) {
+                inner(props, modifier.verificationContainer(VerificationIds.pattern(patternName)).almadarNodeEnter(props), onEvent)
+            }
         }
     }
 }
