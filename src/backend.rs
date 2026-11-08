@@ -262,7 +262,7 @@ fn generate_entity(entity: &OirEntity) -> String {
     ));
     out.push_str("@Serializable\n");
     out.push_str(&format!("data class {}(\n", class_name));
-    out.push_str("    val id: String,\n");
+    out.push_str("    val id: String? = null,\n");
     out.push_str(&fields_out);
 
     out.push_str(")\n\n");
@@ -4570,6 +4570,17 @@ mod tests {
         );
         assert_eq!(render_default(&KotlinLiteral { union_name: "Ctx" }, &text, &OirType::String, None), Ok(Some("\"Ticket details\"".to_string())), "control: a string field keeps its plain string literal");
         assert!(render_default(&KotlinLiteral { union_name: "Ctx" }, &OirValue::Number(1.0), &OirType::Node, None).is_err(), "control: a number is not a text node");
+    }
+
+    #[test]
+    fn an_entity_id_is_optional_because_a_create_carries_none_until_the_store_mints_it() {
+        let mut entity = OirEntity::new("Ticket");
+        let mut subject = OirField::new("subject", OirType::String);
+        subject.required = true;
+        entity.fields.push(subject);
+        let content = generate_entity(&entity);
+        assert!(content.contains("    val id: String? = null,\n"), "{content}");
+        assert!(content.contains("val subject: String,\n"), "control: a required field stays required: {content}");
     }
 
     #[test]
