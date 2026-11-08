@@ -4300,6 +4300,15 @@ mod tests {
     }
 
     #[test]
+    fn a_page_scrolls_like_the_web_document_and_publishes_its_viewport_height() {
+        let app = generate_app_file(&OirModule::new("TestApp", "1.0.0")).content;
+        let at = app.find("private fun PageBody(").expect("page body");
+        let body = &app[at..app[at..].find("private fun PageSlots(").map_or(app.len(), |end| at + end)];
+        assert!(body.contains("LocalAlmadarPageHeight provides maxHeight"));
+        assert!(body.contains(".verticalScroll("));
+    }
+
+    #[test]
     fn page_body_adds_no_inset_padding_around_the_layout() {
         let app = generate_app_file(&OirModule::new("TestApp", "1.0.0")).content;
         let at = app
