@@ -140,6 +140,7 @@ data class KernelEventRequest(
     val dispatchLog: KernelDispatchLog? = null,
     val mount: List<KernelMountSeed>? = null,
     val route: String? = null,
+    val crumb: String? = null,
     val residence: KernelLegResidence? = null,
     val framesSince: Long? = null,
     val heldPayload: Long? = null
