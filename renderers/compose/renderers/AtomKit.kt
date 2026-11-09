@@ -17,6 +17,11 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.MarqueeSpacing
+import androidx.compose.foundation.basicMarquee
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -2594,4 +2599,49 @@ internal fun almadarDomCode(key: String): String = when {
     key.length == 1 && key[0].isLetter() -> "Key" + key.uppercase()
     key.length == 1 && key[0].isDigit() -> "Digit" + key
     else -> key
+}
+
+/** A box's `marquee`: the content moves toward `direction` at `speed` dp/s; `loop` repeats it right after itself, otherwise it passes and starts over; `clip` clips and fades both edges. Under reduced motion it stands still and wraps. */
+@OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
+@Composable
+internal fun AlmadarMarquee(spec: JsonElement, modifier: Modifier, content: @Composable () -> Unit) {
+    val context = LocalContext.current
+    val reduced = remember { Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f }
+    val speed = spec.float("speed")
+    if (reduced || speed <= 0f) {
+        FlowRow(modifier = modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalArrangement = Arrangement.Center) { content() }
+        return
+    }
+    val reading = LocalLayoutDirection.current
+    val travel = if (spec.string("direction", "start") == "end") {
+        if (reading == LayoutDirection.Ltr) LayoutDirection.Rtl else LayoutDirection.Ltr
+    } else reading
+    var strip = modifier.fillMaxWidth()
+    if (spec.bool("clip")) {
+        strip = strip.clipToBounds()
+            .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+            .drawWithContent {
+                drawContent()
+                drawRect(
+                    brush = Brush.horizontalGradient(0f to Color.Transparent, 0.08f to Color.Black, 0.92f to Color.Black, 1f to Color.Transparent),
+                    blendMode = BlendMode.DstIn,
+                )
+            }
+    }
+    Box(modifier = strip) {
+        CompositionLocalProvider(LocalLayoutDirection provides travel) {
+            Row(
+                modifier = Modifier.basicMarquee(
+                    iterations = Int.MAX_VALUE,
+                    repeatDelayMillis = 0,
+                    initialDelayMillis = 0,
+                    spacing = if (spec.bool("loop")) MarqueeSpacing(0.dp) else MarqueeSpacing.fractionOfContainer(1f),
+                    velocity = speed.dp,
+                ),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                CompositionLocalProvider(LocalLayoutDirection provides reading) { Row(verticalAlignment = Alignment.CenterVertically) { content() } }
+            }
+        }
+    }
 }

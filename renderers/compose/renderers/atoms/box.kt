@@ -92,8 +92,15 @@ fun BoxRenderer(
                 val fills = layer.string("className").split(' ').contains("inset-0")
                 RenderChild(layer, if (fills) Modifier.matchParentSize() else Modifier.align(Alignment.TopStart), onEvent)
             }
-            Column(modifier = styled.padding(horizontal = padX, vertical = padY)) {
-                flow.forEach { RenderChild(it, Modifier.fillMaxWidth(), onEvent) }
+            val marquee = (props as? JsonObject)?.get("marquee") as? JsonObject
+            if (marquee != null) {
+                AlmadarMarquee(marquee, styled.padding(horizontal = padX, vertical = padY)) {
+                    flow.forEach { RenderChild(it, Modifier, onEvent) }
+                }
+            } else {
+                Column(modifier = styled.padding(horizontal = padX, vertical = padY)) {
+                    flow.forEach { RenderChild(it, Modifier.fillMaxWidth(), onEvent) }
+                }
             }
         }
     }
