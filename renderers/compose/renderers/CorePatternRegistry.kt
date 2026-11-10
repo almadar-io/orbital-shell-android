@@ -16,6 +16,7 @@ object CorePatternRegistry {
         "animated-counter" to { props, modifier, onEvent -> AnimatedCounterRenderer(props, modifier, onEvent) },
         "animated-graphic" to { props, modifier, onEvent -> AnimatedGraphicRenderer(props, modifier, onEvent) },
         "animated-reveal" to { props, modifier, onEvent -> AnimatedRevealRenderer(props, modifier, onEvent) },
+        "annotated-media" to { props, modifier, onEvent -> AnnotatedMediaRenderer(props, modifier, onEvent) },
         "aside" to { props, modifier, onEvent -> AsideRenderer(props, modifier, onEvent) },
         "atlas-panel" to { props, modifier, onEvent -> AtlasPanelRenderer(props, modifier, onEvent) },
         "auth-layout" to { props, modifier, onEvent -> AuthLayoutRenderer(props, modifier, onEvent) },
