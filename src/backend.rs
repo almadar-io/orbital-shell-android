@@ -2,8 +2,8 @@
 
 use orbital_core_base::generate::{Backend, GeneratedFile, GeneratedOutput};
 use orbital_core_base::ir::{
-    classify_type, render_default, render_type, OirEntity, OirField, OirModule, OirType,
-    TargetLiteralRenderer, TargetTypeRenderer, TypeMappingClass,
+    classify_type, render_default, render_type, HoistedTypeNames, OirEntity, OirField, OirModule,
+    OirType, TargetLiteralRenderer, TargetTypeRenderer, TypeMappingClass,
 };
 use orbital_core_base::schema::{OrbitalSchema, ServiceDefinition};
 use orbital_core_base::str_utils::{
@@ -50,11 +50,13 @@ impl Backend for AndroidBackend {
         let mut files = vec![];
         let mut warnings = vec![];
 
+        let names = hoisted_type_names(module);
         files.push(generate_entities_file(
             &module.distinct_entities(),
             &module.named_types,
+            &names,
         ));
-        files.push(generate_events_file(module));
+        files.push(generate_events_file(module, &names));
         files.push(generate_services_file(&module.services));
         files.push(generate_api_client_file(module));
         files.push(generate_slot_role_file());
@@ -108,9 +110,22 @@ impl Backend for AndroidBackend {
     }
 }
 
+/// The names `Entities.kt` and `Events.kt` (one Kotlin package) hoist under, starting from the type names the program
+/// declares: its named types and its entity classes.
+fn hoisted_type_names(module: &OirModule) -> HoistedTypeNames {
+    HoistedTypeNames::new(
+        module
+            .named_types
+            .keys()
+            .map(|name| orbital_core_base::type_compat::type_identifier(name))
+            .chain(module.distinct_entities().iter().map(|e| kotlin_entity_type(&e.name))),
+    )
+}
+
 fn generate_entities_file(
     entities: &[OirEntity],
     named_types: &std::collections::BTreeMap<String, OirType>,
+    names: &HoistedTypeNames,
 ) -> GeneratedFile {
     let mut content = String::from(
         "package generated\n\nimport kotlinx.serialization.Serializable\nimport kotlinx.serialization.SerialName\n\n",
@@ -123,7 +138,7 @@ fn generate_entities_file(
     let file_hoisted = std::cell::RefCell::new(Vec::new());
     for (name, ty) in named_types {
         let ident = orbital_core_base::type_compat::type_identifier(name);
-        let rendered = oir_type_to_kotlin_with(ty, &ident, &file_hoisted);
+        let rendered = oir_type_to_kotlin_with(ty, &ident, &file_hoisted, names);
         if rendered != ident {
             file_hoisted
                 .borrow_mut()
@@ -136,7 +151,7 @@ fn generate_entities_file(
     }
 
     for entity in entities {
-        content.push_str(&generate_entity(entity));
+        content.push_str(&generate_entity_in(entity, names));
     }
 
     GeneratedFile {
@@ -216,7 +231,12 @@ fn kotlin_enum_decl(enum_name: &str, values: &[String]) -> String {
     )
 }
 
+#[cfg(test)]
 fn generate_entity(entity: &OirEntity) -> String {
+    generate_entity_in(entity, &HoistedTypeNames::default())
+}
+
+fn generate_entity_in(entity: &OirEntity, names: &HoistedTypeNames) -> String {
     let mut out = String::new();
     let class_name = kotlin_entity_type(&entity.name);
 
@@ -224,7 +244,7 @@ fn generate_entity(entity: &OirEntity) -> String {
     for field in &entity.fields {
         if let Some(values) = &field.enum_values {
             if !values.is_empty() {
-                let enum_name = enum_class_name(&class_name, &field.name);
+                let enum_name = names.child(&class_name, &field.name);
                 out.push_str(&kotlin_enum_decl(&enum_name, values));
             }
         }
@@ -235,16 +255,13 @@ fn generate_entity(entity: &OirEntity) -> String {
 
     for field in entity.fields.iter().filter(|f| f.name != "id") {
         let field_name = kotlin_identifier(&split_to_camel_case(&field.name));
-        let (type_hint, optional) = type_for_field(entity, field);
-        let kotlin_type = oir_type_to_kotlin_with(
-            &type_hint,
-            &format!("{}{}", class_name, split_to_pascal_case(&field.name)),
-            &hoisted,
-        );
+        let (type_hint, optional) = type_for_field(entity, field, names);
+        let context = names.child(&class_name, &field.name);
+        let kotlin_type = oir_type_to_kotlin_with(&type_hint, &context, &hoisted, names);
         let default = field.default.as_ref().and_then(|v| {
             match render_default(
                 &KotlinLiteral {
-                    union_name: &format!("{}{}", class_name, split_to_pascal_case(&field.name)),
+                    union_name: &context,
                 },
                 v,
                 &type_hint,
@@ -317,7 +334,7 @@ fn payload_type_local(ty: &OirType, local: &std::collections::BTreeSet<&str>) ->
 
 /// The payload classes of every event a trait declares or emits with a payload, named `<Trait><EVENT>Payload`
 /// as in the TypeScript shell, fields sorted by name.
-fn generate_events_file(module: &OirModule) -> GeneratedFile {
+fn generate_events_file(module: &OirModule, names: &HoistedTypeNames) -> GeneratedFile {
     let mut content = String::from(
         "package generated\n\nimport kotlinx.serialization.Serializable\nimport kotlinx.serialization.SerialName\n\n",
     );
@@ -356,11 +373,8 @@ fn generate_events_file(module: &OirModule) -> GeneratedFile {
         let mut fields_out = String::new();
         for (name, ty, required) in &fields {
             let (inner, optional) = ty.effective(*required);
-            let kotlin_type = oir_type_to_kotlin_with(
-                inner,
-                &format!("{}{}", class_name, split_to_pascal_case(name)),
-                &hoisted,
-            );
+            let kotlin_type =
+                oir_type_to_kotlin_with(inner, &names.child(&class_name, name), &hoisted, names);
             fields_out.push_str(&format!(
                 "    @SerialName(\"{}\")\n    val {}: {}{},\n",
                 escape_double_quoted(name),
@@ -387,7 +401,7 @@ fn generate_events_file(module: &OirModule) -> GeneratedFile {
         let mut fields_out = String::new();
         for knob in &knobs {
             let name = &knob.name;
-            let context = format!("{}{}", class_name, split_to_pascal_case(name));
+            let context = names.child(&class_name, name);
             let ty = match knob.enum_values.as_ref().filter(|v| !v.is_empty()) {
                 Some(values) => {
                     hoisted
@@ -400,7 +414,7 @@ fn generate_events_file(module: &OirModule) -> GeneratedFile {
                 None => knob.field_type.clone(),
             };
             let (inner, optional) = ty.effective(true);
-            let kotlin_type = oir_type_to_kotlin_with(inner, &context, &hoisted);
+            let kotlin_type = oir_type_to_kotlin_with(inner, &context, &hoisted, names);
             let default = knob.default.as_ref().and_then(|v| {
                 match render_default(
                     &KotlinLiteral {
@@ -443,11 +457,13 @@ fn oir_type_to_kotlin_with(
     type_: &OirType,
     context_name: &str,
     hoisted: &std::cell::RefCell<Vec<String>>,
+    names: &HoistedTypeNames,
 ) -> String {
     render_type(
         &KotlinRenderer {
             context_name: context_name.to_string(),
             hoisted,
+            names,
         },
         type_,
         None,
@@ -461,17 +477,13 @@ fn oir_type_to_kotlin_with(
 /// (`field.enum_values` set) still overrides the rendered type to
 /// `<Entity><Field>` regardless of its declared `OirType`, but the
 /// optionality comes from `effective_type` the same as every other field.
-fn type_for_field(entity: &OirEntity, field: &OirField) -> (OirType, bool) {
+fn type_for_field(entity: &OirEntity, field: &OirField, names: &HoistedTypeNames) -> (OirType, bool) {
     let (ty, optional) = field.effective_type();
     if field.enum_values.is_some() {
-        let enum_name = enum_class_name(&kotlin_entity_type(&entity.name), &field.name);
+        let enum_name = names.child(&kotlin_entity_type(&entity.name), &field.name);
         return (OirType::Enum { name: enum_name }, optional);
     }
     (ty.clone(), optional)
-}
-
-fn enum_class_name(entity_name: &str, field_name: &str) -> String {
-    format!("{}{}", entity_name, split_to_pascal_case(field_name))
 }
 
 fn generate_services_file(services: &[orbital_core_base::schema::ServiceRef]) -> GeneratedFile {
@@ -1383,6 +1395,7 @@ fn generate_resolved_schema_file(schema: &OrbitalSchema) -> GeneratedFile {
 struct KotlinRenderer<'a> {
     context_name: String,
     hoisted: &'a std::cell::RefCell<Vec<String>>,
+    names: &'a HoistedTypeNames,
 }
 
 impl TargetTypeRenderer for KotlinRenderer<'_> {
@@ -1450,8 +1463,9 @@ impl TargetTypeRenderer for KotlinRenderer<'_> {
             .iter()
             .map(|f| {
                 let child = KotlinRenderer {
-                    context_name: format!("{}{}", name, split_to_pascal_case(&f.name)),
+                    context_name: self.names.child(&name, &f.name),
                     hoisted: self.hoisted,
+                    names: self.names,
                 };
                 let (inner_ty, optional) = f.effective_type();
                 let t = render_type(&child, inner_ty, f.enum_values.as_deref());
@@ -1492,12 +1506,9 @@ impl TargetTypeRenderer for KotlinRenderer<'_> {
                             .iter()
                             .map(|f| {
                                 let grandchild = KotlinRenderer {
-                                    context_name: format!(
-                                        "{}{}",
-                                        variant_name,
-                                        split_to_pascal_case(&f.name)
-                                    ),
+                                    context_name: self.names.child(&variant_name, &f.name),
                                     hoisted: self.hoisted,
+                                    names: self.names,
                                 };
                                 let (inner_ty, optional) = f.effective_type();
                                 let t =
@@ -1519,8 +1530,9 @@ impl TargetTypeRenderer for KotlinRenderer<'_> {
                     }
                     other => {
                         let value_context = KotlinRenderer {
-                            context_name: format!("{variant_name}Value"),
+                            context_name: self.names.suffixed(&variant_name, "", "Value"),
                             hoisted: self.hoisted,
+                            names: self.names,
                         };
                         let ty = render_type(&value_context, other, None);
                         let decl =
@@ -1663,6 +1675,7 @@ fn oir_type_to_kotlin(type_: &OirType, context_name: &str) -> String {
         &KotlinRenderer {
             context_name: context_name.to_string(),
             hoisted: &hoisted,
+            names: &HoistedTypeNames::default(),
         },
         type_,
         None,
@@ -1679,6 +1692,7 @@ fn oir_type_to_kotlin_hoisted(type_: &OirType, context_name: &str) -> (String, V
         &KotlinRenderer {
             context_name: context_name.to_string(),
             hoisted: &hoisted,
+            names: &HoistedTypeNames::default(),
         },
         type_,
         None,
@@ -1694,6 +1708,7 @@ pub fn classify_oir_type(type_: &OirType) -> TypeMappingClass {
         &KotlinRenderer {
             context_name: "Ctx".to_string(),
             hoisted: &hoisted,
+            names: &HoistedTypeNames::default(),
         },
         type_,
         None,
@@ -2429,6 +2444,64 @@ mod tests {
         t.events = vec![listened, emitted, OirEvent::new("RESET")];
         module.traits.push(t);
         module
+    }
+
+    fn lesson_types(alias: &str) -> OirModule {
+        let mut module = OirModule::new("TestApp", "1.0.0");
+        module.named_types.insert(alias.into(), OirType::Enum { name: "\"a\" | \"b\"".into() });
+        module.named_types.insert(
+            "LessonVisualization".into(),
+            OirType::Struct {
+                fields: vec![
+                    OirField::new("type", OirType::Enum { name: "\"visualization\"".into() }),
+                    OirField::optional("note", OirType::String),
+                ]
+                .into(),
+                additional: None,
+            },
+        );
+        module
+    }
+
+    fn entities_kt(module: &OirModule) -> String {
+        AndroidBackend::new()
+            .generate(module)
+            .files
+            .into_iter()
+            .find(|f| f.path == "Entities.kt")
+            .map(|f| f.content)
+            .expect("Entities.kt")
+    }
+
+    #[test]
+    fn an_inline_field_type_takes_a_name_the_program_does_not_declare() {
+        let content = entities_kt(&lesson_types("LessonVisualizationType"));
+        assert_eq!(content.matches("enum class LessonVisualizationType {").count(), 1, "the program's own type keeps its name, once: {content}");
+        assert!(content.contains("enum class LessonVisualizationType2 {\n    @SerialName(\"visualization\")"), "{content}");
+        assert!(content.contains("data class LessonVisualization(val type: LessonVisualizationType2, val note: String?)"), "the record reads the hoisted name: {content}");
+        let control = entities_kt(&lesson_types("LessonVisualKind"));
+        assert!(control.contains("enum class LessonVisualizationType {\n    @SerialName(\"visualization\")"), "control: a free name is unchanged: {control}");
+        assert!(control.contains("data class LessonVisualization(val type: LessonVisualizationType, val note: String?)"), "{control}");
+        assert!(!control.contains("LessonVisualizationType2"), "{control}");
+    }
+
+    #[test]
+    fn an_entity_field_type_takes_a_name_the_program_does_not_declare_and_its_default_reads_it() {
+        let module = |alias: &str| {
+            let mut module = OirModule::new("TestApp", "1.0.0");
+            module.named_types.insert(alias.into(), OirType::Enum { name: "\"x\" | \"y\"".into() });
+            let mut lesson = OirEntity::new("Lesson");
+            let mut kind = OirField::new("kind", OirType::Enum { name: "\"a\" | \"b\"".into() });
+            kind.default = Some(OirValue::String("a".to_string()));
+            lesson.fields.push(kind);
+            module.entities.push(lesson);
+            module
+        };
+        let content = entities_kt(&module("LessonKind"));
+        assert_eq!(content.matches("enum class LessonKind {").count(), 1, "{content}");
+        assert!(content.contains("val kind: LessonKind2 = LessonKind2.A"), "the field and its default read the free name: {content}");
+        let control = entities_kt(&module("Other"));
+        assert!(control.contains("val kind: LessonKind = LessonKind.A"), "control: {control}");
     }
 
     fn events_kt(module: &OirModule) -> String {
