@@ -91,7 +91,7 @@ impl ShellProgram for AndroidProgram {
             let generated =
                 write_project(&request.module, output, &shell, &backend, &request.write)?;
             return Ok(GenerateResponse {
-                files: written_files(&generated),
+                files: written_files(&generated, orbital_core_base::shell::Shell::generated_dir(&shell)),
                 warnings: generated.warnings,
                 next_steps: vec![
                     format!("cd {}", output.display()),
@@ -121,7 +121,7 @@ impl ShellProgram for AndroidProgram {
         next_steps.push(format!("cd {}", output.display()));
         next_steps.push("./gradlew assembleDebug".to_string());
         Ok(GenerateResponse {
-            files: written_files(&generated),
+            files: written_files(&generated, orbital_core_base::shell::Shell::generated_dir(&crate::AndroidShell::new())),
             warnings: generated.warnings,
             next_steps,
         })

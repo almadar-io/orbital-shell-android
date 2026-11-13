@@ -2,7 +2,7 @@
 
 use orbital_core_base::generate::{Backend, GeneratedFile, GeneratedOutput};
 use orbital_core_base::ir::{
-    classify_type, render_default, render_type, HoistedTypeNames, OirEntity, OirField, OirModule,
+    classify_type, render_default_in, render_type, HoistedTypeNames, OirEntity, OirField, OirModule,
     OirType, TargetLiteralRenderer, TargetTypeRenderer, TypeMappingClass,
 };
 use orbital_core_base::schema::{OrbitalSchema, ServiceDefinition};
@@ -151,7 +151,7 @@ fn generate_entities_file(
     }
 
     for entity in entities {
-        content.push_str(&generate_entity_in(entity, names));
+        content.push_str(&generate_entity_in(entity, names, named_types));
     }
 
     GeneratedFile {
@@ -233,10 +233,14 @@ fn kotlin_enum_decl(enum_name: &str, values: &[String]) -> String {
 
 #[cfg(test)]
 fn generate_entity(entity: &OirEntity) -> String {
-    generate_entity_in(entity, &HoistedTypeNames::default())
+    generate_entity_in(entity, &HoistedTypeNames::default(), &Default::default())
 }
 
-fn generate_entity_in(entity: &OirEntity, names: &HoistedTypeNames) -> String {
+fn generate_entity_in(
+    entity: &OirEntity,
+    names: &HoistedTypeNames,
+    named: &std::collections::BTreeMap<String, OirType>,
+) -> String {
     let mut out = String::new();
     let class_name = kotlin_entity_type(&entity.name);
 
@@ -259,13 +263,14 @@ fn generate_entity_in(entity: &OirEntity, names: &HoistedTypeNames) -> String {
         let context = names.child(&class_name, &field.name);
         let kotlin_type = oir_type_to_kotlin_with(&type_hint, &context, &hoisted, names);
         let default = field.default.as_ref().and_then(|v| {
-            match render_default(
+            match render_default_in(
                 &KotlinLiteral {
                     union_name: &context,
                 },
                 v,
                 &type_hint,
                 None,
+                named,
             ) {
                 Ok(rendered) => rendered,
                 Err(mismatch) => Some(mismatch.marker()),
@@ -416,13 +421,14 @@ fn generate_events_file(module: &OirModule, names: &HoistedTypeNames) -> Generat
             let (inner, optional) = ty.effective(true);
             let kotlin_type = oir_type_to_kotlin_with(inner, &context, &hoisted, names);
             let default = knob.default.as_ref().and_then(|v| {
-                match render_default(
+                match render_default_in(
                     &KotlinLiteral {
                         union_name: &context,
                     },
                     v,
                     inner,
                     None,
+                    &module.named_types,
                 ) {
                     Ok(rendered) => rendered,
                     Err(mismatch) => Some(mismatch.marker()),
@@ -1778,9 +1784,12 @@ impl TargetLiteralRenderer for KotlinLiteral<'_> {
         Some(format!("mapOf({})", pairs.join(", ")))
     }
     fn union_arm(&self, arm: &str, inner: String) -> String {
+        self.union_arm_in(None, arm, inner)
+    }
+    fn union_arm_in(&self, owner: Option<&str>, arm: &str, inner: String) -> String {
         format!(
             "{0}.{0}{1}({inner})",
-            self.union_name,
+            owner.unwrap_or(self.union_name),
             split_to_pascal_case(arm)
         )
     }
@@ -2026,6 +2035,7 @@ fn generate_bridge_test_files() -> Vec<GeneratedFile> {
 mod tests {
 
     use super::*;
+    use orbital_core_base::ir::render_default;
 
     fn awaiting_module() -> OirModule {
         let mut module = OirModule::new("App", "1.0.0");
@@ -3582,6 +3592,37 @@ mod tests {
             vec![
                 "@Serializable(with = CtxSerializer::class)\nsealed class Ctx {\n    @Serializable\n    data class CtxBook(val kind: String) : Ctx()\n    @Serializable\n    data class CtxMovie(val kind: String) : Ctx()\n}\n\nobject CtxSerializer : kotlinx.serialization.KSerializer<Ctx> {\n    override val descriptor: kotlinx.serialization.descriptors.SerialDescriptor = kotlinx.serialization.json.JsonElement.serializer().descriptor\n\n    override fun deserialize(decoder: kotlinx.serialization.encoding.Decoder): Ctx {\n        val input = decoder as kotlinx.serialization.json.JsonDecoder\n        val json = input.json\n        val element = input.decodeJsonElement()\n        try { return json.decodeFromJsonElement(kotlinx.serialization.serializer<Ctx.CtxBook>(), element) } catch (e: kotlinx.serialization.SerializationException) {} catch (e: IllegalArgumentException) {}\n        try { return json.decodeFromJsonElement(kotlinx.serialization.serializer<Ctx.CtxMovie>(), element) } catch (e: kotlinx.serialization.SerializationException) {} catch (e: IllegalArgumentException) {}\n        throw kotlinx.serialization.SerializationException(\"no Ctx arm matches\")\n    }\n\n    override fun serialize(encoder: kotlinx.serialization.encoding.Encoder, value: Ctx) {\n        val output = encoder as kotlinx.serialization.json.JsonEncoder\n        val json = output.json\n        output.encodeJsonElement(when (value) {\n            is Ctx.CtxBook -> json.encodeToJsonElement(kotlinx.serialization.serializer<Ctx.CtxBook>(), value)\n            is Ctx.CtxMovie -> json.encodeToJsonElement(kotlinx.serialization.serializer<Ctx.CtxMovie>(), value)\n        })\n    }\n}"
             ]
+        );
+    }
+
+    #[test]
+    fn a_default_on_an_aliased_union_field_constructs_the_arm_under_the_alias() {
+        let mut named = std::collections::BTreeMap::new();
+        named.insert(
+            "Host".to_string(),
+            OirType::Union {
+                variants: vec![
+                    OirField::new("string", OirType::String),
+                    OirField::new(
+                        "Env",
+                        OirType::Struct { additional: None, fields: vec![OirField::new("anchor", OirType::String)].into() },
+                    ),
+                ]
+                .into(),
+            },
+        );
+        let mut entity = OirEntity::new("Holder");
+        let mut host = OirField::new("host", OirType::TypeRef { name: "Host".to_string() });
+        host.required = false;
+        host.default = Some(OirValue::String("api.example.test".to_string()));
+        entity.fields.push(host);
+        let content = generate_entity_in(&entity, &HoistedTypeNames::default(), &named);
+        assert!(!content.contains("LITERAL_TYPE_MISMATCH"), "{content}");
+        assert!(content.contains("Host.HostString(\"api.example.test\")"), "{content}");
+        entity.fields[0].default = Some(OirValue::Number(1.0));
+        assert!(
+            generate_entity_in(&entity, &HoistedTypeNames::default(), &named).contains("LITERAL_TYPE_MISMATCH"),
+            "control: a number fits no arm"
         );
     }
 
