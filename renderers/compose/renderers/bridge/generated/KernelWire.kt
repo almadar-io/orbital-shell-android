@@ -424,5 +424,6 @@ enum class KernelTransitionRejectionCode {
     @SerialName("effect-failed") effectFailed,
     @SerialName("locale-not-declared") localeNotDeclared,
     @SerialName("client-circuit-state-refused") clientCircuitStateRefused,
-    @SerialName("repaint-failed") repaintFailed
+    @SerialName("repaint-failed") repaintFailed,
+    @SerialName("cascade-capped") cascadeCapped
 }
