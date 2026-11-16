@@ -392,9 +392,11 @@ fn generate_events_file(module: &OirModule, names: &HoistedTypeNames) -> Generat
             content.push_str(&decl);
             content.push_str("\n\n");
         }
-        content.push_str(&format!(
-            "@Serializable\ndata class {class_name}(\n{fields_out})\n\n"
-        ));
+        content.push_str(&if fields_out.is_empty() {
+            format!("@Serializable\nclass {class_name}\n\n")
+        } else {
+            format!("@Serializable\ndata class {class_name}(\n{fields_out})\n\n")
+        });
     }
     for t in &module.traits {
         let knobs = t.config_fields();
@@ -449,9 +451,11 @@ fn generate_events_file(module: &OirModule, names: &HoistedTypeNames) -> Generat
             content.push_str(&decl);
             content.push_str("\n\n");
         }
-        content.push_str(&format!(
-            "@Serializable\ndata class {class_name}(\n{fields_out})\n\n"
-        ));
+        content.push_str(&if fields_out.is_empty() {
+            format!("@Serializable\nclass {class_name}\n\n")
+        } else {
+            format!("@Serializable\ndata class {class_name}(\n{fields_out})\n\n")
+        });
     }
     GeneratedFile {
         path: "Events.kt".to_string(),
@@ -1484,11 +1488,12 @@ impl TargetTypeRenderer for KotlinRenderer<'_> {
                 )
             })
             .collect();
-        self.hoisted.borrow_mut().push(format!(
-            "@Serializable\ndata class {}({})",
-            name,
-            parts.join(", ")
-        ));
+        // Kotlin refuses a data class with no property; a record with no member is a plain serializable class.
+        self.hoisted.borrow_mut().push(if parts.is_empty() {
+            format!("@Serializable\nclass {name}")
+        } else {
+            format!("@Serializable\ndata class {}({})", name, parts.join(", "))
+        });
         name
     }
     fn union_ty(&self, variants: &[OirField]) -> String {
@@ -2336,6 +2341,17 @@ mod tests {
         ));
         module.entities.push(holder);
         module
+    }
+
+    #[test]
+    fn a_record_with_no_member_is_a_plain_class_and_one_with_members_stays_a_data_class() {
+        let mut module = OirModule::new("TestApp", "1.0.0");
+        module.named_types.insert("Empty".to_string(), OirType::Struct { additional: None, fields: Vec::new().into() });
+        let content = entities_file(&module);
+        assert!(content.contains("@Serializable\nclass Empty"), "{content}");
+        assert!(!content.contains("data class Empty"), "{content}");
+        let control = entities_file(&holder_module("Claim"));
+        assert!(control.contains("data class Claim(val id: String)"), "{control}");
     }
 
     #[test]
