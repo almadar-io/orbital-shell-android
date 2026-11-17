@@ -12,6 +12,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
@@ -29,6 +30,7 @@ fun AnnotatedMediaRenderer(
     modifier: Modifier,
     onEvent: (String, JsonElement?) -> Unit
 ) {
+    val content = props.string("mediaType", "image") == "content"
     if (props.string("mediaType", "image") == "video") {
         FallbackRenderer("annotated-media", props, modifier, onEvent)
         return
@@ -45,27 +47,31 @@ fun AnnotatedMediaRenderer(
     val activePinId = props.string("activePinId")
     val pins = props.array("pins").mapNotNull { it as? JsonObject }
     var box by remember { mutableStateOf(IntSize.Zero) }
+    val place: (Offset) -> Unit = { tap ->
+        if (placing && placeEvent.isNotEmpty() && box.width > 0 && box.height > 0) {
+            val x = ((tap.x / box.width * 100f).coerceIn(0f, 100f) * 10f).roundToInt() / 10f
+            val y = ((tap.y / box.height * 100f).coerceIn(0f, 100f) * 10f).roundToInt() / 10f
+            onEvent(placeEvent, eventEnvelope(props, almadarJson("x" to x, "y" to y, "time" to 0)))
+        }
+    }
     Box(
         modifier = modifier.fillMaxWidth()
             .almadarFlexFill()
-            .heightIn(min = LocalAlmadarIconography.current.defaultSize * 5f)
-            .clip(almadarShape(AlmadarCorner.Container))
-            .background(palette.muted)
+            .then(if (content) Modifier else Modifier.heightIn(min = LocalAlmadarIconography.current.defaultSize * 5f).clip(almadarShape(AlmadarCorner.Container)).background(palette.muted))
             .onSizeChanged { box = it }
-            .pointerInput(placing, placeEvent) {
-                detectTapGestures { tap ->
-                    if (placing && placeEvent.isNotEmpty() && box.width > 0 && box.height > 0) {
-                        val x = ((tap.x / box.width * 100f).coerceIn(0f, 100f) * 10f).roundToInt() / 10f
-                        val y = ((tap.y / box.height * 100f).coerceIn(0f, 100f) * 10f).roundToInt() / 10f
-                        onEvent(placeEvent, eventEnvelope(props, almadarJson("x" to x, "y" to y, "time" to 0)))
-                    }
-                }
-            }
+            .then(if (content) Modifier else Modifier.pointerInput(placing, placeEvent) { detectTapGestures { tap -> place(tap) } })
             .almadarActionTag(placeEvent, props)
             .almadarLabel(props.string("aria-label", title.ifEmpty { source })),
         contentAlignment = Alignment.Center
     ) {
-        if (source.isNotEmpty()) {
+        if (content) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                props.children().forEach { RenderChild(it, Modifier.fillMaxWidth(), onEvent) }
+            }
+            if (placing && placeEvent.isNotEmpty()) {
+                Box(modifier = Modifier.matchParentSize().pointerInput(placing, placeEvent) { detectTapGestures { tap -> place(tap) } })
+            }
+        } else if (source.isNotEmpty()) {
             SubcomposeAsyncImage(
                 model = source,
                 imageLoader = rememberAlmadarImageLoader(),
