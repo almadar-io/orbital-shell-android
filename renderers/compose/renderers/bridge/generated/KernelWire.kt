@@ -41,6 +41,7 @@ object KernelTupleStringStringSerializer : KSerializer<KernelTupleStringString> 
 data class KernelAppliedWire(
     val applied: List<KernelTupleStringString>,
     val response: KernelEventResponse,
+    val hostPaints: List<KernelClientEffectByTrait>,
     val serverLegs: List<KernelRoutedLeg>,
     val resync: KernelFramesResync? = null
 )
