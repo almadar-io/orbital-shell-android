@@ -24,6 +24,20 @@ fn read_asset(app: &android_activity::AndroidApp, name: &str) -> String {
     value
 }
 
+/// The program's lazy pages (EXEC-LOAD-2), read from the app's assets where the shell wrote them beside `program.orb`.
+struct AssetLazySource(android_activity::AndroidApp);
+
+impl orbital_core::runtime::LazySource for AssetLazySource {
+    fn read(&self, file: &str) -> Result<orbital_core::runtime::LazyProgram, String> {
+        let name = CString::new(file).map_err(|e| format!("{file}: {e}"))?;
+        let mut asset = self.0.asset_manager().open(&name).ok_or_else(|| format!("{file}: no such asset"))?;
+        let mut text = String::new();
+        asset.read_to_string(&mut text).map_err(|e| format!("{file}: {e}"))?;
+        let schema = orbital_core::schema::parse_schema(&text).map_err(|e| format!("{file}: {e}"))?;
+        Ok(orbital_core::runtime::LazyProgram { schema })
+    }
+}
+
 #[cfg(feature = "native-a11y")]
 #[no_mangle]
 pub extern "C" fn orbital_native_gpu_accessibility_v1() -> u32 {
@@ -54,20 +68,25 @@ pub fn android_main(app: android_activity::AndroidApp) {
     let _ = tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
         .try_init();
+    // A device has no terminal: a panic is logged with its backtrace, or the crash names no frame.
+    std::panic::set_hook(Box::new(|info| {
+        tracing::error!(target: "almadar::android", "{info}\n{}", std::backtrace::Backtrace::force_capture());
+    }));
     let language = read_asset(&app, "language.json");
     orbital_core::language_data::install_language_bundle(&language)
         .expect("install language bundle");
     let schema = read_asset(&app, "program.orb");
     let host: NativeHost = serde_json::from_str(&read_asset(&app, "native-host.json"))
         .expect("native-host.json contract");
+    let lazy: std::sync::Arc<dyn orbital_core::runtime::LazySource> = std::sync::Arc::new(AssetLazySource(app.clone()));
     orbital_client_dioxus::native::set_android_app(app);
     let css = orbital_client_dioxus::styles::program_stylesheets(
         &orbital_core::schema::parse_schema(&schema).expect("bundled program.orb"),
     );
     match host {
-        NativeHost::Embedded => orbital_client_dioxus::native::start(&schema, css, "Native App"),
+        NativeHost::Embedded => orbital_client_dioxus::native::start(&schema, Some(lazy), css, "Native App"),
         NativeHost::Server { backend_url } => {
-            orbital_client_dioxus::native::start_server(&schema, &backend_url, css, "Native App")
+            orbital_client_dioxus::native::start_server(&schema, &backend_url, Some(lazy), css, "Native App")
         }
     }
     .expect("native GPU mount");

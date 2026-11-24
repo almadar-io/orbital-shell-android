@@ -180,6 +180,10 @@ pub struct NativeGpuBackend {
     program: String,
     language: String,
     host: String,
+    /// Each lazy page's program (EXEC-LOAD-2) and its file beside `program.orb`.
+    lazy: Vec<(String, String)>,
+    /// The app's Firebase config (`google-services.json`), which turns the template's sign-in on.
+    firebase_config: Option<String>,
 }
 
 impl NativeGpuBackend {
@@ -187,9 +191,16 @@ impl NativeGpuBackend {
         schema: &OrbitalSchema,
         language: String,
         backend_url: Option<&str>,
+        lazy: &[orbital_core_base::shell_protocol::LazyProgram],
     ) -> Result<Self, serde_json::Error> {
-        let value = serde_json::to_value(schema)?;
-        let program = serde_json::to_string(&orbital_core_eval::util::canonical_json(&value))?;
+        let canonical = |schema: &OrbitalSchema| -> Result<String, serde_json::Error> {
+            serde_json::to_string(&orbital_core_eval::util::canonical_json(&serde_json::to_value(schema)?))
+        };
+        let program = canonical(schema)?;
+        let lazy = lazy
+            .iter()
+            .map(|page| Ok((page.orb_ref.clone(), canonical(&page.program)?)))
+            .collect::<Result<Vec<_>, serde_json::Error>>()?;
         let host = match backend_url {
             Some(url) => serde_json::json!({ "mode": "server", "backendUrl": url }),
             None => serde_json::json!({ "mode": "embedded" }),
@@ -198,7 +209,15 @@ impl NativeGpuBackend {
             program,
             language,
             host: serde_json::to_string(&host)?,
+            lazy,
+            firebase_config: None,
         })
+    }
+
+    /// Ship `config` as the app's `google-services.json`.
+    pub fn with_firebase_config(mut self, config: String) -> Self {
+        self.firebase_config = Some(config);
+        self
     }
 }
 
@@ -208,12 +227,21 @@ impl Backend for NativeGpuBackend {
     }
 
     fn generate(&self, _module: &OirModule) -> GeneratedOutput {
+        let mut files = vec![
+            GeneratedFile::new("app/src/main/assets/program.orb", self.program.clone()),
+            GeneratedFile::new("app/src/main/assets/language.json", self.language.clone()),
+            GeneratedFile::new("app/src/main/assets/native-host.json", self.host.clone()),
+        ];
+        files.extend(
+            self.lazy
+                .iter()
+                .map(|(orb_ref, program)| GeneratedFile::new(format!("app/src/main/assets/{orb_ref}"), program.clone())),
+        );
+        if let Some(config) = &self.firebase_config {
+            files.push(GeneratedFile::new("app/google-services.json", config.clone()));
+        }
         GeneratedOutput {
-            files: vec![
-                GeneratedFile::new("app/src/main/assets/program.orb", self.program.clone()),
-                GeneratedFile::new("app/src/main/assets/language.json", self.language.clone()),
-                GeneratedFile::new("app/src/main/assets/native-host.json", self.host.clone()),
-            ],
+            files,
             warnings: Vec::new(),
         }
     }
@@ -304,6 +332,8 @@ mod tests {
             program: "{}".into(),
             language: "{}".into(),
             host: r#"{"mode":"embedded"}"#.into(),
+            lazy: Vec::new(),
+            firebase_config: None,
         };
         let assets = backend.generate(&OirModule::new("test", "1.0.0")).files;
         assert_eq!(
@@ -319,5 +349,50 @@ mod tests {
         );
         assert_eq!(assets[2].content, r#"{"mode":"embedded"}"#);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_program_with_lazy_pages_ships_each_lazy_program_beside_program_orb() {
+        let blog: OrbitalSchema = orbital_core_base::json_value::from_json_str::<OrbitalSchema>(
+            r#"{"name":"App","typeContractVersion":1,"orbitals":[{"name":"Blog","entity":{"name":"Post","fields":[{"name":"id","type":"string"}]},"traits":[],"pages":[{"name":"BlogPage","path":"/blog","traits":[]}]}]}"#,
+        )
+        .unwrap();
+        let home: OrbitalSchema = orbital_core_base::json_value::from_json_str::<OrbitalSchema>(
+            r#"{"name":"App","typeContractVersion":1,"orbitals":[{"name":"Home","entity":{"name":"Row","fields":[{"name":"id","type":"string"}]},"traits":[],"pages":[{"name":"HomePage","path":"/","traits":[]}]}]}"#,
+        )
+        .unwrap();
+        let lazy = vec![orbital_core_base::shell_protocol::LazyProgram { orb_ref: "lazy/BlogEN.orb".into(), program: blog }];
+        let paths = |lazy: &[orbital_core_base::shell_protocol::LazyProgram]| -> Vec<String> {
+            NativeGpuBackend::new(&home, "{}".into(), None, lazy)
+                .unwrap()
+                .generate(&OirModule::new("test", "1.0.0"))
+                .files
+                .into_iter()
+                .map(|file| file.path)
+                .collect()
+        };
+        let with_lazy = paths(&lazy);
+        assert!(with_lazy.contains(&"app/src/main/assets/lazy/BlogEN.orb".to_string()), "{with_lazy:?}");
+        assert_eq!(paths(&[]).len(), 3, "control: a program with no lazy pages ships its three assets");
+    }
+
+    /// The app's Firebase config rides into the project as `app/google-services.json`, which turns the template's
+    /// sign-in on; an app with none ships no such file and its build applies no google-services plugin.
+    #[test]
+    fn a_firebase_config_ships_as_the_apps_google_services_json() {
+        let home: OrbitalSchema = orbital_core_base::json_value::from_json_str::<OrbitalSchema>(
+            r#"{"name":"App","typeContractVersion":1,"orbitals":[{"name":"Home","entity":{"name":"Row","fields":[{"name":"id","type":"string"}]},"traits":[],"pages":[{"name":"HomePage","path":"/","traits":[]}]}]}"#,
+        )
+        .unwrap();
+        let config = r#"{"project_info":{"project_id":"p"},"client":[]}"#;
+        let files = NativeGpuBackend::new(&home, "{}".into(), None, &[])
+            .unwrap()
+            .with_firebase_config(config.to_string())
+            .generate(&OirModule::new("test", "1.0.0"))
+            .files;
+        let written = files.iter().find(|file| file.path == "app/google-services.json").map(|file| file.content.clone());
+        assert_eq!(written.as_deref(), Some(config));
+        let plain = NativeGpuBackend::new(&home, "{}".into(), None, &[]).unwrap().generate(&OirModule::new("test", "1.0.0")).files;
+        assert!(plain.iter().all(|file| file.path != "app/google-services.json"), "control: no config, no file");
     }
 }

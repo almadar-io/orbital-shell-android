@@ -2,6 +2,7 @@ package {{APP_PACKAGE}};
 
 import android.view.ContextMenu;
 import android.view.GestureDetector;
+import android.view.InputDevice;
 import android.view.MenuItem;
 import android.view.MotionEvent;
 import android.view.View;
@@ -25,6 +26,7 @@ public final class MainActivity extends GameActivity {
     protected void onCreate(android.os.Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         OrbitalMotion.install(this);
+        OrbitalSignIn.install(this);
     }
 
     @Override
@@ -66,6 +68,9 @@ public final class MainActivity extends GameActivity {
 
     @Override
     public boolean onTouchEvent(MotionEvent event) {
+        // GameActivity's native filter (android-activity 0.6.0) takes only an exact touchscreen source; a stylus or
+        // mouse press is a pointer too, as on the web.
+        if (event.isFromSource(InputDevice.SOURCE_CLASS_POINTER)) event.setSource(InputDevice.SOURCE_TOUCHSCREEN);
         if (textMenuGesture != null) textMenuGesture.onTouchEvent(event);
         return super.onTouchEvent(event);
     }

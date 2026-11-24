@@ -39,6 +39,12 @@ impl ShellProgram for AndroidProgram {
                     values: None,
                     default: None,
                 },
+                ShellOption {
+                    name: "firebaseConfig".into(),
+                    description: "Path of the app's google-services.json; the native GPU app then signs in with Google through Firebase".into(),
+                    values: None,
+                    default: None,
+                },
             ],
         )
     }
@@ -79,13 +85,31 @@ impl ShellProgram for AndroidProgram {
                     }) => Some(url.as_str()),
                 _ => return Err(ShellFailure::new(CODE_BAD_REQUEST, "backendUrl must be an HTTP(S) URL")),
             };
+            let firebase_config = match request.options.get("firebaseConfig") {
+                None => None,
+                Some(serde_json::Value::String(path)) => {
+                    let text = std::fs::read_to_string(path)
+                        .map_err(|e| ShellFailure::new(CODE_BAD_REQUEST, format!("firebaseConfig {path}: {e}")))?;
+                    let parsed: serde_json::Value = orbital_core_base::json_value::from_json_str(&text)
+                        .map_err(|e| ShellFailure::new(CODE_BAD_REQUEST, format!("firebaseConfig {path} is not JSON: {e}")))?;
+                    if parsed.get("project_info").is_none() {
+                        return Err(ShellFailure::new(CODE_BAD_REQUEST, format!("firebaseConfig {path} is not a google-services.json (no project_info)")));
+                    }
+                    Some(text)
+                }
+                _ => return Err(ShellFailure::new(CODE_BAD_REQUEST, "firebaseConfig must be a file path")),
+            };
             let backend =
-                crate::native_gpu::NativeGpuBackend::new(&schema, language, backend_url).map_err(|e| {
+                crate::native_gpu::NativeGpuBackend::new(&schema, language, backend_url, &request.lazy).map_err(|e| {
                     ShellFailure::new(
                         CODE_GENERATE_FAILED,
                         format!("serialize resolved program: {e}"),
                     )
                 })?;
+            let backend = match firebase_config {
+                Some(config) => backend.with_firebase_config(config),
+                None => backend,
+            };
             let shell = crate::native_gpu::NativeGpuShell::new()
                 .map_err(|e| ShellFailure::new(CODE_GENERATE_FAILED, e.to_string()))?;
             let generated =
