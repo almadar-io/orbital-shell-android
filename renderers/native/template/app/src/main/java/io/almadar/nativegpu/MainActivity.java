@@ -12,7 +12,9 @@ import android.view.inputmethod.EditorInfo;
 import com.google.androidgamesdk.GameActivity;
 import com.google.androidgamesdk.OrbitalTextInput;
 import com.google.androidgamesdk.OrbitalVideoInput;
+import com.google.androidgamesdk.OrbitalFirstFrame;
 import com.google.androidgamesdk.OrbitalMotion;
+import com.google.androidgamesdk.OrbitalSignIn;
 import com.google.androidgamesdk.gametextinput.InputConnection;
 
 public final class MainActivity extends GameActivity {
@@ -25,6 +27,7 @@ public final class MainActivity extends GameActivity {
     @Override
     protected void onCreate(android.os.Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        OrbitalFirstFrame.install(this);
         OrbitalMotion.install(this);
         OrbitalSignIn.install(this);
     }

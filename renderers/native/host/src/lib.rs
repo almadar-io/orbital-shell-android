@@ -55,6 +55,14 @@ pub extern "system" fn Java_com_google_androidgamesdk_OrbitalTextInput_nativeIsE
 }
 
 #[no_mangle]
+pub extern "system" fn Java_com_google_androidgamesdk_OrbitalFirstFrame_nativePresented(
+    _env: *mut std::ffi::c_void,
+    _class: *mut std::ffi::c_void,
+) -> u8 {
+    orbital_client_dioxus::native::first_frame_presented() as u8
+}
+
+#[no_mangle]
 pub extern "system" fn Java_com_google_androidgamesdk_OrbitalMotion_nativeSetReducedMotion(
     _env: *mut std::ffi::c_void,
     _class: *mut std::ffi::c_void,
@@ -78,6 +86,15 @@ pub fn android_main(app: android_activity::AndroidApp) {
     let schema = read_asset(&app, "program.orb");
     let host: NativeHost = serde_json::from_str(&read_asset(&app, "native-host.json"))
         .expect("native-host.json contract");
+    let carried = |path: &str| -> Result<Vec<u8>, String> {
+        let name = CString::new(path).map_err(|e| e.to_string())?;
+        let mut asset = app.asset_manager().open(&name).ok_or_else(|| "no such asset".to_string())?;
+        let mut bytes = Vec::new();
+        asset.read_to_end(&mut bytes).map_err(|e| e.to_string())?;
+        Ok(bytes)
+    };
+    orbital_client_dioxus::native::register_bundled_files(&read_asset(&app, orbital_core::native_bundle::BUNDLED_FILES), carried)
+        .expect("bundled files");
     let lazy: std::sync::Arc<dyn orbital_core::runtime::LazySource> = std::sync::Arc::new(AssetLazySource(app.clone()));
     orbital_client_dioxus::native::set_android_app(app);
     let schema = orbital_core::schema::parse_schema(&schema).expect("bundled program.orb");
