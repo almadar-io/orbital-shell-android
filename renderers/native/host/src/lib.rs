@@ -80,13 +80,12 @@ pub fn android_main(app: android_activity::AndroidApp) {
         .expect("native-host.json contract");
     let lazy: std::sync::Arc<dyn orbital_core::runtime::LazySource> = std::sync::Arc::new(AssetLazySource(app.clone()));
     orbital_client_dioxus::native::set_android_app(app);
-    let css = orbital_client_dioxus::styles::program_stylesheets(
-        &orbital_core::schema::parse_schema(&schema).expect("bundled program.orb"),
-    );
+    let schema = orbital_core::schema::parse_schema(&schema).expect("bundled program.orb");
+    let css = orbital_client_dioxus::styles::program_stylesheets(&schema);
     match host {
-        NativeHost::Embedded => orbital_client_dioxus::native::start(&schema, Some(lazy), css, "Native App"),
+        NativeHost::Embedded => orbital_client_dioxus::native::start(schema, Some(lazy), css, "Native App"),
         NativeHost::Server { backend_url } => {
-            orbital_client_dioxus::native::start_server(&schema, &backend_url, Some(lazy), css, "Native App")
+            orbital_client_dioxus::native::start_server(schema, &backend_url, Some(lazy), css, "Native App")
         }
     }
     .expect("native GPU mount");

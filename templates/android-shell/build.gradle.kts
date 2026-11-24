@@ -1,6 +1,6 @@
 // Top-level build file for the generated Android project.
 plugins {
-    id("com.android.application") version "8.2.2" apply false
+    id("com.android.application") version "8.5.2" apply false
     id("org.jetbrains.kotlin.android") version "1.9.22" apply false
     id("org.jetbrains.kotlin.plugin.serialization") version "1.9.22" apply false
     // Program C wave C4 render gate (docs/Almadar_Compiler_Gaps.md §157) —
