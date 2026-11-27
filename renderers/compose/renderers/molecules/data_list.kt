@@ -68,7 +68,7 @@ fun DataListRenderer(
     } else if (props.jsonObject("error") != null) {
         AlmadarErrorText(props, modifier.fillMaxWidth().padding(vertical = almadarSpaceFor("lg")))
     } else if (data.isEmpty()) {
-        AlmadarEmptySlot(props, props.string("emptyMessage", "No items"), onEvent, modifier)
+        if (!almadarSaysNothingWhenEmpty(props)) AlmadarEmptySlot(props, props.string("emptyMessage", "No items"), onEvent, modifier)
     } else {
         Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(almadarSpaceFor(gap))) {
             var lastGroup: String? = null

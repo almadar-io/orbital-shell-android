@@ -751,6 +751,13 @@ internal fun AlmadarRowActions(
     }
 }
 
+/** `emptyMessage: ""` declares a list that says nothing when empty; a declared title, description or action still shows. */
+internal fun almadarSaysNothingWhenEmpty(parent: JsonElement): Boolean =
+    parent.primitive("emptyMessage")?.let { it.isString && it.content.isEmpty() } == true &&
+        parent.string("emptyTitle").isEmpty() &&
+        (parent as? JsonObject)?.get("emptyDescription") == null &&
+        (parent as? JsonObject)?.get("emptyAction") == null
+
 @Composable
 internal fun AlmadarEmptySlot(parent: JsonElement, fallbackTitle: String, onEvent: (String, JsonElement?) -> Unit, modifier: Modifier = Modifier) {
     val action = parent.jsonObject("emptyAction")
